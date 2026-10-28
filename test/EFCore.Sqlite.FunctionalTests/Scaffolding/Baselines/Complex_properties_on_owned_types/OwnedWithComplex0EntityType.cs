@@ -520,7 +520,7 @@ public partial class OwnedWithComplex0EntityType
             shadowCount: 1,
             relationshipCount: 1,
             storeGeneratedCount: 1));
-        runtimeEntityType.FindComplexProperty("Tags").ComplexType.SetCounts(new PropertyCounts(
+        tagComplex.SetCounts(new PropertyCounts(
             propertyCount: 1,
             navigationCount: 0,
             complexPropertyCount: 0,

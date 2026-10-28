@@ -678,26 +678,40 @@ public partial class RelationalShapedQueryCompilingExpressionVisitor
                                 var visitedEntityMaterializationExpression = Visit(rewrittenEntityMaterializationExpression);
                                 _expressions.Add(Assign(entityParameter, visitedEntityMaterializationExpression));
 
-                                foreach (var childProjectionInfo in queryableJsonEntityProjectionInfo.ChildrenProjectionInfo)
+                                foreach (var (jsonProjectionInfo, structuralProperty) in queryableJsonEntityProjectionInfo.ChildrenProjectionInfo)
                                 {
-                                    var (jsonReaderDataVariable, keyValuesParameter) = JsonShapingPreProcess(
-                                        childProjectionInfo.JsonProjectionInfo,
-                                        childProjectionInfo.Navigation.TargetEntityType,
-                                        childProjectionInfo.Navigation.IsCollection);
+                                    var (targetType, targetClrType, isCollection) = structuralProperty switch
+                                    {
+                                        INavigation navigation
+                                            => ((ITypeBase)navigation.TargetEntityType, navigation.TargetEntityType.ClrType, navigation.IsCollection),
+                                        IComplexProperty complexProperty
+                                            => (complexProperty.ComplexType, complexProperty.ClrType, complexProperty.IsCollection),
+                                        _ => throw new UnreachableException()
+                                    };
 
-                                    var targetEntityType = childProjectionInfo.Navigation.TargetEntityType;
+                                    var (jsonReaderDataVariable, keyValuesParameter) = JsonShapingPreProcess(
+                                        jsonProjectionInfo, targetType, isCollection);
+
                                     var shaperResult = CreateJsonShapers(
-                                        targetEntityType,
-                                        targetEntityType.ClrType,
+                                        targetType,
+                                        targetClrType,
                                         nullable: true,
                                         jsonReaderDataVariable,
                                         keyValuesParameter,
                                         containerEntityExpression: entityParameter,
-                                        childProjectionInfo.Navigation);
+                                        structuralProperty);
 
                                     var visitedShaperResult = Visit(shaperResult);
 
-                                    _includeExpressions.Add(visitedShaperResult);
+                                    // Complex values are part of materialization, while owned navigations are fixed up as includes
+                                    if (structuralProperty is IComplexProperty)
+                                    {
+                                        _expressions.Add(visitedShaperResult);
+                                    }
+                                    else
+                                    {
+                                        _includeExpressions.Add(visitedShaperResult);
+                                    }
                                 }
 
                                 accessor = CompensateForCollectionMaterialization(

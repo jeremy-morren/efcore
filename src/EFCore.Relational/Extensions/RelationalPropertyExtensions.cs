@@ -1274,7 +1274,7 @@ public static class RelationalPropertyExtensions
                 && IsNullable(complexType.ComplexProperty));
     }
 
-    private static bool IsOptionalSharingDependent(
+    internal static bool IsOptionalSharingDependent(
         IReadOnlyEntityType entityType,
         in StoreObjectIdentifier storeObject,
         int recursionDepth)

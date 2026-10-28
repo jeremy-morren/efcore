@@ -675,7 +675,11 @@ public class ModificationCommand : IModificationCommand, INonTrackedModification
             }
 
             var modifiedMembers = entry.EntityType.GetFlattenedProperties().Where(entry.IsModified).ToList();
-            if (modifiedMembers.Count == 1)
+
+            // Complex collections and null changes of complex properties can't be patched one scalar at a time
+            if (modifiedMembers.Count == 1
+                && !entry.EntityType.GetFlattenedComplexProperties().Any(cp => cp.IsCollection && entry.IsModified(cp))
+                && !IsInNullableComplexProperty(modifiedMembers[0]))
             {
                 result.Add(
                     new JsonPartialUpdatePathEntry(
@@ -693,6 +697,21 @@ public class ModificationCommand : IModificationCommand, INonTrackedModification
 
             // parent entity got deleted, no need to do any json-specific processing
             return currentEntry?.EntityState == EntityState.Deleted ? null : result;
+
+            static bool IsInNullableComplexProperty(IProperty property)
+            {
+                for (var type = property.DeclaringType as IComplexType;
+                     type != null;
+                     type = type.ComplexProperty.DeclaringType as IComplexType)
+                {
+                    if (type.ComplexProperty.IsNullable)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
         }
 
         static List<JsonPartialUpdatePathEntry> FindCommonJsonPartialUpdateInfo(
@@ -788,15 +807,45 @@ public class ModificationCommand : IModificationCommand, INonTrackedModification
                 {
                     var complexType = complexProperty.ComplexType;
                     if (!complexType.IsMappedToJson()
-                        || complexProperty.DeclaringType.IsMappedToJson()
-                        || (entry.EntityState != EntityState.Added
-                            && !entry.IsModified(complexProperty)))
+                        || complexProperty.DeclaringType.IsMappedToJson())
                     {
                         continue;
                     }
 
                     var jsonColumn = GetTableMapping(entry.EntityType)!.Table.FindColumn(complexType.GetContainerColumnName()!);
-                    if (jsonColumn is not null && !jsonColumnsUpdateMap.ContainsKey(jsonColumn))
+                    if (jsonColumn is null
+                        || jsonColumnsUpdateMap.ContainsKey(jsonColumn))
+                    {
+                        continue;
+                    }
+
+                    if (entry.EntityState == EntityState.Deleted)
+                    {
+                        // The row is kept for the other entries sharing it, so clear the JSON of the removed dependent
+                        if (entry.SharedIdentityEntry == null)
+                        {
+                            columnModifications.Add(
+                                new ColumnModification(
+                                    new ColumnModificationParameters(
+                                        jsonColumn.Name,
+                                        originalValue: null,
+                                        value: null,
+                                        property: null,
+                                        jsonColumn.StoreTypeMapping.StoreType,
+                                        jsonColumn.StoreTypeMapping,
+                                        read: false,
+                                        write: true,
+                                        key: false,
+                                        condition: false,
+                                        _sensitiveLoggingEnabled,
+                                        isNullable: true) { GenerateParameterName = _generateParameterName }));
+                        }
+
+                        continue;
+                    }
+
+                    if (entry.EntityState == EntityState.Added
+                        || entry.IsModified(complexProperty))
                     {
                         var jsonPartialUpdateInfo = new List<JsonPartialUpdatePathEntry> { new("$", null, entry, complexProperty) };
                         jsonColumnsUpdateMap[jsonColumn] = jsonPartialUpdateInfo;

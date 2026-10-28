@@ -557,22 +557,19 @@ public class SqlServerQueryableMethodTranslatingExpressionVisitor : RelationalQu
             }
         }
 
-        var nestedJsonPropertyNames = jsonQueryExpression.StructuralType switch
+        var nestedJsonPropertyNames = structuralType.GetComplexProperties().Select(p => p.ComplexType.GetJsonPropertyName()
+            ?? throw new UnreachableException("JSON-mapped complex property without a JSON property name."));
+
+        if (structuralType is IEntityType entityType)
         {
-            IEntityType entityType
-                => entityType.GetNavigationsInHierarchy()
+            nestedJsonPropertyNames = nestedJsonPropertyNames.Concat(
+                entityType.GetNavigationsInHierarchy()
                     .Where(n => n.ForeignKey.IsOwnership
                         && n.TargetEntityType.IsMappedToJson()
                         && n.ForeignKey.PrincipalToDependent == n)
                     .Select(n => n.TargetEntityType.GetJsonPropertyName()
-                        ?? throw new UnreachableException("JSON-mapped navigation without a JSON property name.")),
-
-            IComplexType complexType
-                => complexType.GetComplexProperties().Select(p => p.ComplexType.GetJsonPropertyName()
-                    ?? throw new UnreachableException("JSON-mapped complex property without a JSON property name.")),
-
-            _ => throw new UnreachableException("Unexpected structural type when transforming JSON query to table.")
-        };
+                        ?? throw new UnreachableException("JSON-mapped navigation without a JSON property name.")));
+        }
 
         foreach (var jsonPropertyName in nestedJsonPropertyNames)
         {

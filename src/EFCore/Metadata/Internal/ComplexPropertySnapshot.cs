@@ -1,8 +1,6 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using Microsoft.EntityFrameworkCore.Internal;
-
 namespace Microsoft.EntityFrameworkCore.Metadata.Internal;
 
 /// <summary>
@@ -102,7 +100,7 @@ public class ComplexPropertySnapshot
         {
             // Default names are derived from the declaring type, so regenerate them for the new one
             var complexTypeName = ComplexType.Name
-                == ComplexProperty.DeclaringType.GetOwnedName(ComplexType.ClrType.ShortDisplayName(), ComplexProperty.Name)
+                == ComplexProperty.GetDefaultComplexTypeName(ComplexProperty.DeclaringType, ComplexProperty.Name, ComplexType.ClrType)
                     ? null
                     : ComplexType.Name;
 

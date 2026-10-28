@@ -1,6 +1,8 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using Microsoft.EntityFrameworkCore.Cosmos.Internal;
+
 namespace Microsoft.EntityFrameworkCore.Query;
 
 public class OwnedComplexPropertiesQueryCosmosTest(NonSharedFixture fixture) : OwnedComplexPropertiesQueryTestBase(fixture)
@@ -155,6 +157,30 @@ ReadItem(None, 1)
 SELECT VALUE c
 FROM root c
 OFFSET 0 LIMIT 2
+""");
+    }
+
+    public override async Task Value_converter_in_complex_type_on_owned_reference()
+    {
+        // Primitive collections with element converters aren't supported on Cosmos
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(base.Value_converter_in_complex_type_on_owned_reference);
+
+        Assert.Equal(CosmosStrings.ElementWithValueConverter("List<TagId>", "Tag", "RelatedIds", "TagId"), exception.Message);
+
+        AssertSql();
+    }
+
+    public override async Task Value_comparer_in_complex_type_on_owned_reference()
+    {
+        await base.Value_comparer_in_complex_type_on_owned_reference();
+
+        AssertSql(
+            """
+ReadItem(None, 1)
+""",
+            //
+            """
+ReadItem(None, 1)
 """);
     }
 

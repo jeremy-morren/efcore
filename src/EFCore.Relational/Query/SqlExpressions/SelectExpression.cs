@@ -1341,7 +1341,7 @@ public sealed partial class SelectExpression : TableExpressionBase
                                 newPropertyIndexMap[property] = projectionIndexMap[value];
                             }
 
-                            var newChildrenProjectionInfo = new List<(JsonProjectionInfo, INavigation)>();
+                            var newChildrenProjectionInfo = new List<(JsonProjectionInfo, IPropertyBase)>();
                             foreach (var childProjectionInfo in queryableJsonProjectionInfo.ChildrenProjectionInfo)
                             {
                                 var newKeyAccessInfo = new List<(IProperty?, int?, int?)>();
@@ -1358,7 +1358,7 @@ public sealed partial class SelectExpression : TableExpressionBase
                                             projectionIndexMap[childProjectionInfo.JsonProjectionInfo.JsonColumnIndex],
                                             newKeyAccessInfo,
                                             childProjectionInfo.JsonProjectionInfo.JsonColumn),
-                                        childProjectionInfo.Navigation));
+                                        childProjectionInfo.StructuralProperty));
                             }
 
                             remappedConstant = Constant(
@@ -1436,7 +1436,7 @@ public sealed partial class SelectExpression : TableExpressionBase
                     propertyIndexMap[property] = AddToProjection(projection.BindProperty(property), null);
                 }
 
-                var childrenProjectionInfo = new List<(JsonProjectionInfo, INavigation)>();
+                var childrenProjectionInfo = new List<(JsonProjectionInfo, IPropertyBase)>();
                 foreach (var ownedNavigation in entityType.GetNavigations().Where(n => n.TargetEntityType.IsMappedToJson()
                              && n.ForeignKey.IsOwnership
                              && n == n.ForeignKey.PrincipalToDependent))
@@ -1444,6 +1444,19 @@ public sealed partial class SelectExpression : TableExpressionBase
                     var jsonQueryExpression = (JsonQueryExpression)projection.BindNavigation(ownedNavigation)!.ValueBufferExpression;
                     var jsonProjectionInfo = (JsonProjectionInfo)AddJsonProjection(jsonQueryExpression).Value!;
                     childrenProjectionInfo.Add((jsonProjectionInfo, ownedNavigation));
+                }
+
+                foreach (var complexProperty in entityType.GetComplexProperties())
+                {
+                    var jsonQueryExpression = projection.BindComplexProperty(complexProperty) switch
+                    {
+                        StructuralTypeShaperExpression { ValueBufferExpression: JsonQueryExpression jsonQuery } => jsonQuery,
+                        CollectionResultExpression { QueryExpression: JsonQueryExpression jsonQuery } => jsonQuery,
+                        _ => throw new UnreachableException("Non-JSON complex property on JSON entity type.")
+                    };
+
+                    var jsonProjectionInfo = (JsonProjectionInfo)AddJsonProjection(jsonQueryExpression).Value!;
+                    childrenProjectionInfo.Add((jsonProjectionInfo, complexProperty));
                 }
 
                 return Constant(new QueryableJsonProjectionInfo(propertyIndexMap, childrenProjectionInfo));
@@ -2986,12 +2999,12 @@ public sealed partial class SelectExpression : TableExpressionBase
             bool nullable,
             Dictionary<IComplexProperty, Expression> complexPropertyExpressions)
         {
+            var mappings = dependentTables.Count == 1 ? null : entityType.GetQueryMappings().ToList();
             foreach (var complexProperty in entityType.GetComplexProperties())
             {
-                var table = dependentTables.Count == 1
+                var table = mappings == null
                     ? dependentTables[0]
-                    : RelationalQueryableMethodTranslatingExpressionVisitor.FindTable(
-                        complexProperty, entityType.GetQueryMappings().ToList());
+                    : RelationalQueryableMethodTranslatingExpressionVisitor.FindTable(complexProperty, mappings);
 
                 complexPropertyExpressions[complexProperty] = RelationalQueryableMethodTranslatingExpressionVisitor.ProcessComplexProperty(
                     complexProperty, table, tableMap[table], containerNullable: nullable);
@@ -3007,48 +3020,25 @@ public sealed partial class SelectExpression : TableExpressionBase
                     ValueBufferExpression: StructuralTypeProjectionExpression projection
                 } structuralShaper:
                 {
-                    var propertyExpressions = new Dictionary<IProperty, ColumnExpression>();
-                    foreach (var property in projection.StructuralType.GetProperties())
-                    {
-                        propertyExpressions[property] = subquery.GenerateOuterColumn(tableAlias, projection.BindProperty(property));
-                    }
-
-                    var complexPropertyExpressions = new Dictionary<IComplexProperty, Expression>();
-                    foreach (var complexProperty in projection.StructuralType.GetComplexProperties())
-                    {
-                        complexPropertyExpressions[complexProperty] = LiftComplexShaper(
-                            projection.BindComplexProperty(complexProperty), subquery, tableAlias, makeNullable: false);
-                    }
-
                     var liftedShaper = structuralShaper.Update(
-                        new StructuralTypeProjectionExpression(
-                            projection.StructuralType, propertyExpressions, complexPropertyExpressions, projection.IsNullable));
+                        LiftStructuralProjectionFromSubquery(projection, subquery, tableAlias, projectionMap: null));
 
                     return makeNullable ? liftedShaper.MakeNullable() : liftedShaper;
                 }
 
                 case StructuralTypeShaperExpression { ValueBufferExpression: JsonQueryExpression jsonQuery } jsonShaper:
-                    return jsonShaper.Update(LiftJsonQuery(jsonQuery));
+                {
+                    var liftedShaper = jsonShaper.Update(LiftJsonQueryFromSubquery(jsonQuery, subquery, tableAlias, projectionMap: null));
 
+                    return makeNullable ? liftedShaper.MakeNullable() : liftedShaper;
+                }
+
+                // Like StructuralTypeProjectionExpression.MakeNullable, collections keep their nullability
                 case CollectionResultExpression { QueryExpression: JsonQueryExpression jsonQuery } collectionResult:
-                    return collectionResult.Update(LiftJsonQuery(jsonQuery));
+                    return collectionResult.Update(LiftJsonQueryFromSubquery(jsonQuery, subquery, tableAlias, projectionMap: null));
 
                 default:
                     throw new UnreachableException("Unexpected complex property binding on owned entity type.");
-            }
-
-            JsonQueryExpression LiftJsonQuery(JsonQueryExpression jsonQuery)
-            {
-                Check.DebugAssert(jsonQuery.Path.Count == 0, "Complex JSON property on a non-JSON owned type should be at the root.");
-
-                var liftedJsonQuery = new JsonQueryExpression(
-                    jsonQuery.StructuralType,
-                    subquery.GenerateOuterColumn(tableAlias, jsonQuery.JsonColumn),
-                    keyPropertyMap: null,
-                    jsonQuery.Type,
-                    jsonQuery.IsCollection);
-
-                return makeNullable ? liftedJsonQuery.MakeNullable() : liftedJsonQuery;
             }
         }
 
@@ -4290,11 +4280,11 @@ public sealed partial class SelectExpression : TableExpressionBase
                 switch (item)
                 {
                     case StructuralTypeProjectionExpression projection:
-                        _clientProjections[i] = LiftStructuralProjectionFromSubquery(projection, subqueryAlias);
+                        _clientProjections[i] = LiftStructuralProjectionFromSubquery(projection, subquery, subqueryAlias, projectionMap);
                         break;
 
                     case JsonQueryExpression jsonQueryExpression:
-                        _clientProjections[i] = LiftJsonQueryFromSubquery(jsonQueryExpression);
+                        _clientProjections[i] = LiftJsonQueryFromSubquery(jsonQueryExpression, subquery, subqueryAlias, projectionMap);
                         break;
 
                     case SqlExpression sqlExpression:
@@ -4324,11 +4314,11 @@ public sealed partial class SelectExpression : TableExpressionBase
                 switch (expression)
                 {
                     case StructuralTypeProjectionExpression projection:
-                        _projectionMapping[projectionMember] = LiftStructuralProjectionFromSubquery(projection, subqueryAlias);
+                        _projectionMapping[projectionMember] = LiftStructuralProjectionFromSubquery(projection, subquery, subqueryAlias, projectionMap);
                         break;
 
                     case JsonQueryExpression jsonQueryExpression:
-                        _projectionMapping[projectionMember] = LiftJsonQueryFromSubquery(jsonQueryExpression);
+                        _projectionMapping[projectionMember] = LiftJsonQueryFromSubquery(jsonQueryExpression, subquery, subqueryAlias, projectionMap);
                         break;
 
                     case SqlExpression innerColumn:
@@ -4423,131 +4413,147 @@ public sealed partial class SelectExpression : TableExpressionBase
         }
 
         return sqlRemappingVisitor;
+    }
 
-        StructuralTypeProjectionExpression LiftStructuralProjectionFromSubquery(
-            StructuralTypeProjectionExpression projection,
-            string subqueryAlias)
+    private static StructuralTypeProjectionExpression LiftStructuralProjectionFromSubquery(
+        StructuralTypeProjectionExpression projection,
+        SelectExpression subquery,
+        string subqueryAlias,
+        Dictionary<SqlExpression, ColumnExpression>? projectionMap)
+    {
+        var propertyExpressions = new Dictionary<IProperty, ColumnExpression>();
+        var complexPropertyCache = new Dictionary<IComplexProperty, Expression>();
+
+        foreach (var property in projection.StructuralType.GetPropertiesInHierarchy())
         {
-            var propertyExpressions = new Dictionary<IProperty, ColumnExpression>();
-            var complexPropertyCache = new Dictionary<IComplexProperty, Expression>();
-
-            foreach (var property in projection.StructuralType.GetPropertiesInHierarchy())
+            // json entity projection (i.e. JSON entity that was transformed into query root) may have synthesized keys
+            // but they don't correspond to any columns - we need to skip those
+            if (projection is { StructuralType: IEntityType entityType }
+                && entityType.IsMappedToJson()
+                && property.IsOrdinalKeyProperty())
             {
-                // json entity projection (i.e. JSON entity that was transformed into query root) may have synthesized keys
-                // but they don't correspond to any columns - we need to skip those
-                if (projection is { StructuralType: IEntityType entityType }
-                    && entityType.IsMappedToJson()
-                    && property.IsOrdinalKeyProperty())
-                {
-                    continue;
-                }
+                continue;
+            }
 
-                var innerColumn = projection.BindProperty(property);
-                var outerColumn = subquery.GenerateOuterColumn(subqueryAlias, innerColumn);
+            var innerColumn = projection.BindProperty(property);
+            var outerColumn = subquery.GenerateOuterColumn(subqueryAlias, innerColumn);
 
+            if (projectionMap != null)
+            {
                 projectionMap[innerColumn] = outerColumn;
-                propertyExpressions[property] = outerColumn;
             }
+            propertyExpressions[property] = outerColumn;
+        }
 
-            foreach (var complexProperty in GetAllComplexPropertiesInHierarchy(projection.StructuralType))
+        foreach (var complexProperty in GetAllComplexPropertiesInHierarchy(projection.StructuralType))
+        {
+            switch (projection.BindComplexProperty(complexProperty))
             {
-                switch (projection.BindComplexProperty(complexProperty))
-                {
-                    // Non-JSON complex type - table splitting
-                    case StructuralTypeShaperExpression { ValueBufferExpression: StructuralTypeProjectionExpression p } shaper:
-                        complexPropertyCache[complexProperty] = shaper.Update(LiftStructuralProjectionFromSubquery(p, subqueryAlias));
-                        continue;
+                // Non-JSON complex type - table splitting
+                case StructuralTypeShaperExpression { ValueBufferExpression: StructuralTypeProjectionExpression p } shaper:
+                    complexPropertyCache[complexProperty] = shaper.Update(LiftStructuralProjectionFromSubquery(p, subquery, subqueryAlias, projectionMap));
+                    continue;
 
-                    // JSON complex type (non-collection)
-                    case StructuralTypeShaperExpression { ValueBufferExpression: JsonQueryExpression jsonQuery } shaper:
-                        complexPropertyCache[complexProperty] = shaper.Update(LiftJsonQueryFromSubquery(jsonQuery));
-                        continue;
+                // JSON complex type (non-collection)
+                case StructuralTypeShaperExpression { ValueBufferExpression: JsonQueryExpression jsonQuery } shaper:
+                    complexPropertyCache[complexProperty] = shaper.Update(LiftJsonQueryFromSubquery(jsonQuery, subquery, subqueryAlias, projectionMap));
+                    continue;
 
-                    // JSON complex type (collection)
-                    case CollectionResultExpression { QueryExpression: JsonQueryExpression jsonQuery } shaper:
-                        complexPropertyCache[complexProperty] = shaper.Update(LiftJsonQueryFromSubquery(jsonQuery));
-                        continue;
+                // JSON complex type (collection)
+                case CollectionResultExpression { QueryExpression: JsonQueryExpression jsonQuery } shaper:
+                    complexPropertyCache[complexProperty] = shaper.Update(LiftJsonQueryFromSubquery(jsonQuery, subquery, subqueryAlias, projectionMap));
+                    continue;
 
-                    default:
-                        throw new UnreachableException(
-                            "Unexpected complex property binding when lifting structural projection from subquery.");
-                }
+                default:
+                    throw new UnreachableException(
+                        "Unexpected complex property binding when lifting structural projection from subquery.");
             }
+        }
 
-            ColumnExpression? discriminatorExpression = null;
-            if (projection.DiscriminatorExpression != null)
+        ColumnExpression? discriminatorExpression = null;
+        if (projection.DiscriminatorExpression != null)
+        {
+            discriminatorExpression = subquery.GenerateOuterColumn(
+                subqueryAlias, projection.DiscriminatorExpression, DiscriminatorColumnAlias);
+            if (projectionMap != null)
             {
-                discriminatorExpression = subquery.GenerateOuterColumn(
-                    subqueryAlias, projection.DiscriminatorExpression, DiscriminatorColumnAlias);
                 projectionMap[projection.DiscriminatorExpression] = discriminatorExpression;
             }
-
-            var newEntityProjection = new StructuralTypeProjectionExpression(
-                projection.StructuralType, propertyExpressions, complexPropertyCache, nullable: false, discriminatorExpression,
-                projection.TableMap);
-
-            if (projection.StructuralType is IEntityType entityType2)
-            {
-                // Also lift nested entity projections
-                foreach (var navigation in entityType2
-                             .GetAllBaseTypes().Concat(entityType2.GetDerivedTypesInclusive())
-                             .SelectMany(t => t.GetDeclaredNavigations()))
-                {
-                    var boundEntityShaperExpression = projection.BindNavigation(navigation);
-                    if (boundEntityShaperExpression != null)
-                    {
-                        var newValueBufferExpression =
-                            boundEntityShaperExpression.ValueBufferExpression is StructuralTypeProjectionExpression innerEntityProjection
-                                ? (Expression)LiftStructuralProjectionFromSubquery(innerEntityProjection, subqueryAlias)
-                                : LiftJsonQueryFromSubquery((JsonQueryExpression)boundEntityShaperExpression.ValueBufferExpression);
-
-                        boundEntityShaperExpression = boundEntityShaperExpression.Update(newValueBufferExpression);
-                        newEntityProjection.AddNavigationBinding(navigation, boundEntityShaperExpression);
-                    }
-                }
-            }
-
-            return newEntityProjection;
         }
 
-        JsonQueryExpression LiftJsonQueryFromSubquery(JsonQueryExpression jsonQueryExpression)
+        var newEntityProjection = new StructuralTypeProjectionExpression(
+            projection.StructuralType, propertyExpressions, complexPropertyCache, nullable: false, discriminatorExpression,
+            projection.TableMap);
+
+        if (projection.StructuralType is IEntityType entityType2)
         {
-            var jsonScalarExpression = new JsonScalarExpression(
-                jsonQueryExpression.JsonColumn,
-                jsonQueryExpression.Path,
-                jsonQueryExpression.JsonColumn.TypeMapping!.ClrType,
-                jsonQueryExpression.JsonColumn.TypeMapping,
-                jsonQueryExpression.IsNullable);
-
-            // The JsonColumn always represents the containing JSON column, so flow its model column through the pushdown even
-            // though the projection itself is a JsonScalarExpression (which has no model column of its own).
-            var newJsonColumn = subquery.GenerateOuterColumn(
-                subqueryAlias, jsonScalarExpression, column: jsonQueryExpression.JsonColumn.Column);
-
-            Dictionary<IProperty, ColumnExpression>? newKeyPropertyMap = null;
-
-            if (jsonQueryExpression.KeyPropertyMap is not null)
+            // Also lift nested entity projections
+            foreach (var navigation in entityType2
+                         .GetAllBaseTypes().Concat(entityType2.GetDerivedTypesInclusive())
+                         .SelectMany(t => t.GetDeclaredNavigations()))
             {
-                newKeyPropertyMap = [];
-                var keyProperties = jsonQueryExpression.KeyPropertyMap.Keys.ToList();
-                for (var i = 0; i < keyProperties.Count; i++)
+                var boundEntityShaperExpression = projection.BindNavigation(navigation);
+                if (boundEntityShaperExpression != null)
                 {
-                    var keyProperty = keyProperties[i];
-                    var innerColumn = jsonQueryExpression.BindProperty(keyProperty);
-                    var outerColumn = subquery.GenerateOuterColumn(subqueryAlias, innerColumn);
-                    projectionMap[innerColumn] = outerColumn;
-                    newKeyPropertyMap[keyProperty] = outerColumn;
+                    var newValueBufferExpression =
+                        boundEntityShaperExpression.ValueBufferExpression is StructuralTypeProjectionExpression innerEntityProjection
+                            ? (Expression)LiftStructuralProjectionFromSubquery(innerEntityProjection, subquery, subqueryAlias, projectionMap)
+                            : LiftJsonQueryFromSubquery(
+                        (JsonQueryExpression)boundEntityShaperExpression.ValueBufferExpression, subquery, subqueryAlias, projectionMap);
+
+                    boundEntityShaperExpression = boundEntityShaperExpression.Update(newValueBufferExpression);
+                    newEntityProjection.AddNavigationBinding(navigation, boundEntityShaperExpression);
                 }
             }
-
-            // clear up the json path - we start from empty path after pushdown
-            return new JsonQueryExpression(
-                jsonQueryExpression.StructuralType,
-                newJsonColumn,
-                newKeyPropertyMap,
-                jsonQueryExpression.Type,
-                jsonQueryExpression.IsCollection);
         }
+
+        return newEntityProjection;
+    }
+
+    private static JsonQueryExpression LiftJsonQueryFromSubquery(
+        JsonQueryExpression jsonQueryExpression,
+        SelectExpression subquery,
+        string subqueryAlias,
+        Dictionary<SqlExpression, ColumnExpression>? projectionMap)
+    {
+        var jsonScalarExpression = new JsonScalarExpression(
+            jsonQueryExpression.JsonColumn,
+            jsonQueryExpression.Path,
+            jsonQueryExpression.JsonColumn.TypeMapping!.ClrType,
+            jsonQueryExpression.JsonColumn.TypeMapping,
+            jsonQueryExpression.IsNullable);
+
+        // The JsonColumn always represents the containing JSON column, so flow its model column through the pushdown even
+        // though the projection itself is a JsonScalarExpression (which has no model column of its own).
+        var newJsonColumn = subquery.GenerateOuterColumn(
+            subqueryAlias, jsonScalarExpression, column: jsonQueryExpression.JsonColumn.Column);
+
+        Dictionary<IProperty, ColumnExpression>? newKeyPropertyMap = null;
+
+        if (jsonQueryExpression.KeyPropertyMap is not null)
+        {
+            newKeyPropertyMap = [];
+            var keyProperties = jsonQueryExpression.KeyPropertyMap.Keys.ToList();
+            for (var i = 0; i < keyProperties.Count; i++)
+            {
+                var keyProperty = keyProperties[i];
+                var innerColumn = jsonQueryExpression.BindProperty(keyProperty);
+                var outerColumn = subquery.GenerateOuterColumn(subqueryAlias, innerColumn);
+                if (projectionMap != null)
+                {
+                    projectionMap[innerColumn] = outerColumn;
+                }
+                newKeyPropertyMap[keyProperty] = outerColumn;
+            }
+        }
+
+        // clear up the json path - we start from empty path after pushdown
+        return new JsonQueryExpression(
+            jsonQueryExpression.StructuralType,
+            newJsonColumn,
+            newKeyPropertyMap,
+            jsonQueryExpression.Type,
+            jsonQueryExpression.IsCollection);
     }
 
     /// <summary>

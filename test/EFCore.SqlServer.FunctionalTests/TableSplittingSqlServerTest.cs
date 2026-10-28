@@ -182,6 +182,37 @@ ORDER BY [v].[Name]
 """);
     }
 
+    public override async Task Can_remove_optional_dependent_with_json_complex_property()
+    {
+        await base.Can_remove_optional_dependent_with_json_complex_property();
+
+        AssertSql(
+            """
+@p0=NULL
+@p2='1'
+@p1=NULL (Size = 4000)
+
+SET IMPLICIT_TRANSACTIONS OFF;
+SET NOCOUNT ON;
+UPDATE [Cars] SET [Specs] = @p0, [Color] = @p1
+OUTPUT 1
+WHERE [Id] = @p2;
+""",
+            //
+            """
+SELECT [c1].[c]
+FROM [Cars] AS [c]
+LEFT JOIN (
+    SELECT [c0].[Id], [c0].[Color], [c0].[Specs] AS [c]
+    FROM [Cars] AS [c0]
+    WHERE [c0].[Color] IS NOT NULL
+) AS [c1] ON [c].[Id] = CASE
+    WHEN [c1].[Color] IS NOT NULL THEN [c1].[Id]
+END
+ORDER BY [c].[Id]
+""");
+    }
+
     public override async Task ExecuteUpdate_works_for_table_sharing(bool async)
     {
         await base.ExecuteUpdate_works_for_table_sharing(async);

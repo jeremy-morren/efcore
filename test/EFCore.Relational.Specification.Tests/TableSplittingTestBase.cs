@@ -790,6 +790,85 @@ public abstract class TableSplittingTestBase : NonSharedModelTestBase, IClassFix
             : query.ToList();
     }
 
+    [Fact]
+    public virtual async Task Can_remove_optional_dependent_with_json_complex_property()
+    {
+        var contextFactory = await InitializeNonSharedTest<ContextJsonComplexDependent>(
+            seed: context =>
+            {
+                context.AddRange(
+                    new Car
+                    {
+                        Id = 1,
+                        Name = "Car1",
+                        Details = new CarDetails
+                        {
+                            Id = 1,
+                            Color = "Red",
+                            Specs = new CarSpecs { Doors = 4 }
+                        }
+                    },
+                    new Car { Id = 2, Name = "Car2" });
+
+                return context.SaveChangesAsync();
+            });
+
+        using (var context = contextFactory.CreateDbContext())
+        {
+            var car = await context.Cars.Include(c => c.Details).SingleAsync(c => c.Id == 1);
+            context.Remove(car.Details!);
+
+            TestSqlLoggerFactory.Clear();
+            await context.SaveChangesAsync();
+        }
+
+        using (var context = contextFactory.CreateDbContext())
+        {
+            var specs = await context.Cars.OrderBy(c => c.Id).Select(c => (CarSpecs?)c.Details!.Specs).ToListAsync();
+
+            Assert.All(specs, Assert.Null);
+        }
+    }
+
+    protected class ContextJsonComplexDependent(DbContextOptions options) : DbContext(options)
+    {
+        public DbSet<Car> Cars
+            => Set<Car>();
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Car>(b =>
+            {
+                b.Property(c => c.Id).ValueGeneratedNever();
+                b.HasOne(c => c.Details).WithOne().HasForeignKey<CarDetails>(d => d.Id);
+            });
+            modelBuilder.Entity<CarDetails>(b =>
+            {
+                b.ToTable("Cars");
+                b.ComplexProperty(d => d.Specs, sb => sb.ToJson());
+            });
+        }
+    }
+
+    protected class Car
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = null!;
+        public CarDetails? Details { get; set; }
+    }
+
+    protected class CarDetails
+    {
+        public int Id { get; set; }
+        public string Color { get; set; } = null!;
+        public CarSpecs Specs { get; set; } = null!;
+    }
+
+    protected class CarSpecs
+    {
+        public int Doors { get; set; }
+    }
+
     protected class Context29196(DbContextOptions options) : DbContext(options)
     {
         public DbSet<Order> Orders

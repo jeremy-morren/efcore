@@ -1612,7 +1612,7 @@ public partial class PrincipalDerivedEntityType
             shadowCount: 3,
             relationshipCount: 3,
             storeGeneratedCount: 1));
-        runtimeEntityType.FindComplexProperty("ManyOwned").ComplexType.SetCounts(new PropertyCounts(
+        ownedCollection.SetCounts(new PropertyCounts(
             propertyCount: 20,
             navigationCount: 0,
             complexPropertyCount: 1,

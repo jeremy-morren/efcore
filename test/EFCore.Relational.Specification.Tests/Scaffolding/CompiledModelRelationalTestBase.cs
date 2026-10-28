@@ -1153,6 +1153,24 @@ public abstract class CompiledModelRelationalTestBase(NonSharedFixture fixture) 
             });
 
     [Fact]
+    public virtual Task Complex_collection_change_tracking()
+        => Test(
+            modelBuilder => modelBuilder.Entity<EntityWithComplexCollection>(
+                eb => eb.ComplexCollection(e => e.Tags, tb => tb.ToJson())),
+            model => Assert.True(
+                model.FindEntityType(typeof(EntityWithComplexCollection))!
+                    .FindComplexProperty(nameof(EntityWithComplexCollection.Tags))!.IsCollection),
+            async c =>
+            {
+                c.Add(new EntityWithComplexCollection { Tags = [new TagComplex { Text = "a" }, new TagComplex { Text = "b" }] });
+                await c.SaveChangesAsync();
+                c.ChangeTracker.Clear();
+
+                var entity = await c.Set<EntityWithComplexCollection>().SingleAsync();
+                Assert.Equal(["a", "b"], entity.Tags.Select(t => t.Text));
+            });
+
+    [Fact]
     public virtual Task Complex_properties_on_owned_types()
         => Test(
             modelBuilder => modelBuilder.Entity<OwnerWithComplex>(eb =>
@@ -1625,6 +1643,12 @@ public partial class DbContextModel
     public class Author
     {
         public string Name { get; set; } = "";
+    }
+
+    public class EntityWithComplexCollection
+    {
+        public int Id { get; set; }
+        public List<TagComplex> Tags { get; set; } = [];
     }
 
     public class OwnerWithComplex

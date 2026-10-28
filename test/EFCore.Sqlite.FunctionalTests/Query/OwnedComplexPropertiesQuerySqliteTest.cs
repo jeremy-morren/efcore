@@ -1,6 +1,8 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using Microsoft.EntityFrameworkCore.Sqlite.Internal;
+
 namespace Microsoft.EntityFrameworkCore.Query;
 
 public class OwnedComplexPropertiesQuerySqliteTest(NonSharedFixture fixture) : OwnedComplexPropertiesQueryRelationalTestBase(fixture)
@@ -147,9 +149,9 @@ ORDER BY "o0"."Id"
             """
 @p='5'
 
-SELECT "o0"."Id", "o0"."Owned_Name", "o0"."Address"
+SELECT "o0"."Id", "o0"."Owned_Name", "o0"."c"
 FROM (
-    SELECT "o"."Id", "o"."Owned_Name", "o"."Address"
+    SELECT "o"."Id", "o"."Owned_Name", "o"."Address" AS "c"
     FROM "Owners" AS "o"
     ORDER BY "o"."Id"
     LIMIT @p
@@ -539,6 +541,348 @@ RETURNING 1;
             """
 SELECT "o"."Id", "o"."Name", "o"."Owned_Name", "o"."Owned_Address_City", "o"."Owned_Address_Street", "o"."Owned_Address_Country_Code", "o"."Owned_Address_Country_Name"
 FROM "Owners" AS "o"
+LIMIT 2
+""");
+    }
+
+    public override async Task Value_converter_in_complex_type_on_owned_reference()
+    {
+        await base.Value_converter_in_complex_type_on_owned_reference();
+
+        AssertSql(
+            """
+@p0='[{"Code":"A","Id":30,"Label":"Ten","RelatedIds":[]}]' (Nullable = false) (Size = 52)
+@p3='1'
+@p1='3'
+@p2='[5,6,7]' (Nullable = false) (Size = 7)
+
+UPDATE "OwnerWithTag" SET "Tags" = @p0, "Owned_Tag_Id" = @p1, "Owned_Tag_RelatedIds" = @p2
+WHERE "Id" = @p3
+RETURNING 1;
+""",
+            //
+            """
+SELECT "o"."Id", "o"."Owned_Tag_Code", "o"."Owned_Tag_Id", "o"."Owned_Tag_Label", "o"."Owned_Tag_RelatedIds", "o"."Tags"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Owned_Tag_Id" = 3
+LIMIT 2
+""");
+    }
+
+    public override async Task Value_converter_in_complex_type_on_json_owned_reference()
+    {
+        await base.Value_converter_in_complex_type_on_json_owned_reference();
+
+        AssertSql(
+            """
+@p0='{"Tag":{"Code":"A","Id":3,"Label":"One","RelatedIds":[5,6,7]},"Tags":[{"Code":"A","Id":30,"Label":"Ten","RelatedIds":[]}]}' (Nullable = false) (Size = 122)
+@p1='1'
+
+UPDATE "OwnerWithTag" SET "Owned" = @p0
+WHERE "Id" = @p1
+RETURNING 1;
+""",
+            //
+            """
+SELECT "o"."Id", "o"."Owned"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Owned" ->> '$.Tag.Id' = 3
+LIMIT 2
+""");
+    }
+
+    public override async Task Value_converter_in_json_complex_type_on_owned_reference()
+    {
+        await base.Value_converter_in_json_complex_type_on_owned_reference();
+
+        AssertSql(
+            """
+@p0='{"Code":"A","Id":3,"Label":"One","RelatedIds":[5,6,7]}' (Nullable = false) (Size = 54)
+@p1='[{"Code":"A","Id":30,"Label":"Ten","RelatedIds":[]}]' (Nullable = false) (Size = 52)
+@p2='1'
+
+UPDATE "OwnerWithTag" SET "Tag" = @p0, "Tags" = @p1
+WHERE "Id" = @p2
+RETURNING 1;
+""",
+            //
+            """
+SELECT "o"."Id", "o"."Tag", "o"."Tags"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Tag" ->> 'Id' = 3
+LIMIT 2
+""");
+    }
+
+    public override async Task Json_owned_collection_with_complex_property_as_queryable()
+    {
+        Assert.Equal(
+            SqliteStrings.ApplyNotSupported,
+            (await Assert.ThrowsAsync<InvalidOperationException>(()
+                => base.Json_owned_collection_with_complex_property_as_queryable())).Message);
+
+        AssertSql();
+    }
+
+    public override async Task Json_owned_collection_filter_on_complex_property()
+    {
+        await base.Json_owned_collection_filter_on_complex_property();
+
+        AssertSql(
+            """
+SELECT (
+    SELECT COUNT(*)
+    FROM (
+        SELECT "o0"."value" ->> 'Address' AS "Address"
+        FROM json_each("o"."OwnedCollection", '$') AS "o0"
+    ) AS "o1"
+    WHERE "o1"."Address" ->> 'City' = 'Perth')
+FROM "Owners" AS "o"
+ORDER BY "o"."Id"
+""");
+    }
+
+    public override async Task Complex_property_of_owned_reference_after_pushdown()
+    {
+        await base.Complex_property_of_owned_reference_after_pushdown();
+
+        AssertSql(
+            """
+@p='5'
+
+SELECT "o0"."Id", "o0"."Name", "o0"."Owned_Name", "o0"."Owned_Address_City", "o0"."Owned_Address_Street", "o0"."Owned_Address_Country_Code", "o0"."Owned_Address_Country_Name"
+FROM (
+    SELECT "o"."Id", "o"."Name", "o"."Owned_Name", "o"."Owned_Address_City", "o"."Owned_Address_Street", "o"."Owned_Address_Country_Code", "o"."Owned_Address_Country_Name"
+    FROM "Owners" AS "o"
+    WHERE "o"."Owned_Name" <> 'X'
+    ORDER BY "o"."Id"
+    LIMIT @p
+) AS "o0"
+WHERE "o0"."Owned_Address_City" = 'Berlin'
+ORDER BY "o0"."Id"
+""");
+    }
+
+    public override async Task Remove_optional_owned_reference_with_json_complex_property()
+    {
+        await base.Remove_optional_owned_reference_with_json_complex_property();
+
+        AssertSql(
+            """
+@p0=NULL
+@p2='1'
+@p1=NULL
+
+UPDATE "OwnerOfOptional" SET "Address" = @p0, "Holder_Note" = @p1
+WHERE "Id" = @p2
+RETURNING 1;
+""",
+            //
+            """
+@p0='3'
+
+INSERT INTO "OwnerOfOptional" ("Id")
+VALUES (@p0);
+""",
+            //
+            """
+SELECT "o"."Address"
+FROM "OwnerOfOptional" AS "o"
+ORDER BY "o"."Id"
+""");
+    }
+
+    public override async Task ExecuteUpdate_complex_property_of_owned_reference()
+    {
+        await base.ExecuteUpdate_complex_property_of_owned_reference();
+
+        AssertSql(
+            """
+@p='Melbourne' (Size = 9)
+
+UPDATE "Owners" AS "o"
+SET "Owned_Address_City" = @p
+WHERE "o"."Id" = 1
+""",
+            //
+            """
+SELECT "o"."Id", "o"."Name", "o"."Owned_Name", "o"."Owned_Address_City", "o"."Owned_Address_Street", "o"."Owned_Address_Country_Code", "o"."Owned_Address_Country_Name"
+FROM "Owners" AS "o"
+WHERE "o"."Id" = 1
+LIMIT 2
+""");
+    }
+
+    public override async Task ExecuteUpdate_complex_property_of_json_owned_reference()
+    {
+        await base.ExecuteUpdate_complex_property_of_json_owned_reference();
+
+        AssertSql();
+    }
+
+    public override async Task Json_complex_properties_on_same_owned_type_under_two_navigations_throws()
+    {
+        await base.Json_complex_properties_on_same_owned_type_under_two_navigations_throws();
+
+        AssertSql();
+    }
+
+    public override async Task Update_scalar_and_complex_collection_of_json_owned_reference()
+    {
+        await base.Update_scalar_and_complex_collection_of_json_owned_reference();
+
+        AssertSql(
+            """
+@p0='{"Tag":{"Code":"A","Id":1,"Label":"Uno","RelatedIds":"5,6"},"Tags":[{"Code":"A","Id":10,"Label":"Ten","RelatedIds":""},{"Code":"E","Id":11,"Label":"Eleven","RelatedIds":""}]}' (Nullable = false) (Size = 174)
+@p1='1'
+
+UPDATE "OwnerWithTag" SET "Owned" = @p0
+WHERE "Id" = @p1
+RETURNING 1;
+""",
+            //
+            """
+SELECT "o"."Id", "o"."Owned"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Id" = 1
+LIMIT 2
+""");
+    }
+
+    public override async Task Optional_owned_reference_with_null_scalars_and_complex_property()
+    {
+        await base.Optional_owned_reference_with_null_scalars_and_complex_property();
+
+        AssertSql();
+    }
+
+    public override async Task Value_comparer_in_complex_type_on_owned_reference()
+    {
+        await base.Value_comparer_in_complex_type_on_owned_reference();
+
+        AssertSql(
+            """
+SELECT "o"."Id", "o"."Owned_Tag_Code", "o"."Owned_Tag_Id", "o"."Owned_Tag_Label", "o"."Owned_Tag_RelatedIds", "o"."Tags"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Id" = 1
+LIMIT 2
+""",
+            //
+            """
+@p1='1'
+@p0='5,6,7' (Nullable = false) (Size = 5)
+
+UPDATE "OwnerWithTag" SET "Owned_Tag_RelatedIds" = @p0
+WHERE "Id" = @p1
+RETURNING 1;
+""",
+            //
+            """
+SELECT "o"."Id", "o"."Owned_Tag_Code", "o"."Owned_Tag_Id", "o"."Owned_Tag_Label", "o"."Owned_Tag_RelatedIds", "o"."Tags"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Id" = 1
+LIMIT 2
+""");
+    }
+
+    public override async Task Value_comparer_in_complex_type_on_json_owned_reference()
+    {
+        await base.Value_comparer_in_complex_type_on_json_owned_reference();
+
+        AssertSql(
+            """
+SELECT "o"."Id", "o"."Owned"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Id" = 1
+LIMIT 2
+""",
+            //
+            """
+@p0='5,6,7' (Nullable = false) (Size = 5)
+@p1='1'
+
+UPDATE "OwnerWithTag" SET "Owned" = json_set("Owned", '$.Tag.RelatedIds', @p0)
+WHERE "Id" = @p1
+RETURNING 1;
+""",
+            //
+            """
+SELECT "o"."Id", "o"."Owned"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Id" = 1
+LIMIT 2
+""");
+    }
+
+    public override async Task Value_comparer_in_json_complex_type_on_owned_reference()
+    {
+        await base.Value_comparer_in_json_complex_type_on_owned_reference();
+
+        AssertSql(
+            """
+SELECT "o"."Id", "o"."Tag", "o"."Tags"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Id" = 1
+LIMIT 2
+""",
+            //
+            """
+@p0='{"Code":"A","Id":1,"Label":"One","RelatedIds":"5,6,7"}' (Nullable = false) (Size = 54)
+@p1='1'
+
+UPDATE "OwnerWithTag" SET "Tag" = @p0
+WHERE "Id" = @p1
+RETURNING 1;
+""",
+            //
+            """
+SELECT "o"."Id", "o"."Tag", "o"."Tags"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Id" = 1
+LIMIT 2
+""");
+    }
+
+    public override async Task Json_value_reader_writer_in_complex_type_on_json_owned_reference()
+    {
+        await base.Json_value_reader_writer_in_complex_type_on_json_owned_reference();
+
+        AssertSql(
+            """
+@p0='C' (Nullable = false) (Size = 1)
+@p1='1'
+
+UPDATE "OwnerWithTag" SET "Owned" = json_set("Owned", '$.Tag.Code', @p0)
+WHERE "Id" = @p1
+RETURNING 1;
+""",
+            //
+            """
+SELECT "o"."Id", "o"."Owned"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Id" = 1
+LIMIT 2
+""");
+    }
+
+    public override async Task Json_value_reader_writer_in_json_complex_type_on_owned_reference()
+    {
+        await base.Json_value_reader_writer_in_json_complex_type_on_owned_reference();
+
+        AssertSql(
+            """
+@p0='{"Code":"#C","Id":1,"Label":"One","RelatedIds":"5,6"}' (Nullable = false) (Size = 53)
+@p1='1'
+
+UPDATE "OwnerWithTag" SET "Tag" = @p0
+WHERE "Id" = @p1
+RETURNING 1;
+""",
+            //
+            """
+SELECT "o"."Id", "o"."Tag", "o"."Tags"
+FROM "OwnerWithTag" AS "o"
+WHERE "o"."Id" = 1
 LIMIT 2
 """);
     }
