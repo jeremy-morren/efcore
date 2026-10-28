@@ -2714,18 +2714,18 @@ public sealed partial class SelectExpression : TableExpressionBase
 
         var expressions = GetPropertyExpressions(
             sqlExpressionFactory, sqlAliasManager, navigation, this, identifyingColumn, allowOwnerJoin);
-        if (expressions is null)
+        if (expressions is not var (propertyExpressions, complexPropertyExpressions))
         {
             return null;
         }
 
-        // TODO: support for complex types on owned entity types, #33170
-        var complexPropertyMap = new Dictionary<IComplexProperty, Expression>();
-
+        var nullable = identifyingColumn.IsNullable
+            || navigation.DeclaringEntityType.BaseType != null
+            || !navigation.ForeignKey.IsRequiredDependent;
         var entityShaper = new RelationalStructuralTypeShaperExpression(
             navigation.TargetEntityType,
-            new StructuralTypeProjectionExpression(navigation.TargetEntityType, expressions, complexPropertyMap),
-            identifyingColumn.IsNullable || navigation.DeclaringEntityType.BaseType != null || !navigation.ForeignKey.IsRequiredDependent);
+            new StructuralTypeProjectionExpression(navigation.TargetEntityType, propertyExpressions, complexPropertyExpressions, nullable),
+            nullable);
         principalEntityProjection.AddNavigationBinding(navigation, entityShaper);
 
         return entityShaper;
@@ -2733,7 +2733,7 @@ public sealed partial class SelectExpression : TableExpressionBase
         // Owned types don't support inheritance See https://github.com/dotnet/efcore/issues/9630
         // So there is no handling for dependent having hierarchy
         // TODO: The following code should also handle Function and SqlQuery mappings when supported on owned type
-        static IReadOnlyDictionary<IProperty, ColumnExpression>? GetPropertyExpressions(
+        static (Dictionary<IProperty, ColumnExpression>, Dictionary<IComplexProperty, Expression>)? GetPropertyExpressions(
             ISqlExpressionFactory sqlExpressionFactory,
             SqlAliasManager sqlAliasManager,
             INavigation navigation,
@@ -2742,6 +2742,7 @@ public sealed partial class SelectExpression : TableExpressionBase
             bool allowOwnerJoin)
         {
             var propertyExpressions = new Dictionary<IProperty, ColumnExpression>();
+            var complexPropertyExpressions = new Dictionary<IComplexProperty, Expression>();
             var tableExpressionBase = selectExpression.GetTable(identifyingColumn).UnwrapJoin();
             var tableAlias = tableExpressionBase.GetRequiredAlias();
             if (tableExpressionBase is SelectExpression subquery)
@@ -2752,9 +2753,9 @@ public sealed partial class SelectExpression : TableExpressionBase
                     .Single(e => string.Equals(e.Alias, identifyingColumn.Name, StringComparison.OrdinalIgnoreCase))
                     .Expression;
 
-                var subqueryPropertyExpressions = GetPropertyExpressions(
+                var subqueryExpressions = GetPropertyExpressions(
                     sqlExpressionFactory, sqlAliasManager, navigation, subquery, subqueryIdentifyingColumn, allowOwnerJoin);
-                if (subqueryPropertyExpressions is null)
+                if (subqueryExpressions is not var (subqueryPropertyExpressions, subqueryComplexPropertyExpressions))
                 {
                     return null;
                 }
@@ -2771,7 +2772,12 @@ public sealed partial class SelectExpression : TableExpressionBase
                     propertyExpressions[property] = outerColumn;
                 }
 
-                return propertyExpressions;
+                foreach (var (complexProperty, complexShaper) in subqueryComplexPropertyExpressions)
+                {
+                    complexPropertyExpressions[complexProperty] = LiftComplexShaper(complexShaper, subquery, tableAlias, changeNullability);
+                }
+
+                return (propertyExpressions, complexPropertyExpressions);
             }
 
             // This is the select expression where owner table exists
@@ -2878,7 +2884,9 @@ public sealed partial class SelectExpression : TableExpressionBase
                             nullable: property.IsPrimaryKey() ? pkColumnsNullable : newColumnsNullable);
                     }
 
-                    return propertyExpressions;
+                    AddComplexPropertyExpressions(entityType, dependentTables, tableMap, newColumnsNullable, complexPropertyExpressions);
+
+                    return (propertyExpressions, complexPropertyExpressions);
                 }
             }
 
@@ -2961,12 +2969,87 @@ public sealed partial class SelectExpression : TableExpressionBase
                     nullable: newColumnsNullable);
             }
 
+            AddComplexPropertyExpressions(entityType, dependentTables, tableMap, newColumnsNullable, complexPropertyExpressions);
+
             foreach (var property in keyProperties)
             {
                 selectExpression._identifier.Add((propertyExpressions[property], property.GetKeyValueComparer()));
             }
 
-            return propertyExpressions;
+            return (propertyExpressions, complexPropertyExpressions);
+        }
+
+        static void AddComplexPropertyExpressions(
+            IEntityType entityType,
+            List<ITableBase> dependentTables,
+            Dictionary<ITableBase, string> tableMap,
+            bool nullable,
+            Dictionary<IComplexProperty, Expression> complexPropertyExpressions)
+        {
+            foreach (var complexProperty in entityType.GetComplexProperties())
+            {
+                var table = dependentTables.Count == 1
+                    ? dependentTables[0]
+                    : RelationalQueryableMethodTranslatingExpressionVisitor.FindTable(
+                        complexProperty, entityType.GetQueryMappings().ToList());
+
+                complexPropertyExpressions[complexProperty] = RelationalQueryableMethodTranslatingExpressionVisitor.ProcessComplexProperty(
+                    complexProperty, table, tableMap[table], containerNullable: nullable);
+            }
+        }
+
+        static Expression LiftComplexShaper(Expression shaper, SelectExpression subquery, string tableAlias, bool makeNullable)
+        {
+            switch (shaper)
+            {
+                case StructuralTypeShaperExpression
+                {
+                    ValueBufferExpression: StructuralTypeProjectionExpression projection
+                } structuralShaper:
+                {
+                    var propertyExpressions = new Dictionary<IProperty, ColumnExpression>();
+                    foreach (var property in projection.StructuralType.GetProperties())
+                    {
+                        propertyExpressions[property] = subquery.GenerateOuterColumn(tableAlias, projection.BindProperty(property));
+                    }
+
+                    var complexPropertyExpressions = new Dictionary<IComplexProperty, Expression>();
+                    foreach (var complexProperty in projection.StructuralType.GetComplexProperties())
+                    {
+                        complexPropertyExpressions[complexProperty] = LiftComplexShaper(
+                            projection.BindComplexProperty(complexProperty), subquery, tableAlias, makeNullable: false);
+                    }
+
+                    var liftedShaper = structuralShaper.Update(
+                        new StructuralTypeProjectionExpression(
+                            projection.StructuralType, propertyExpressions, complexPropertyExpressions, projection.IsNullable));
+
+                    return makeNullable ? liftedShaper.MakeNullable() : liftedShaper;
+                }
+
+                case StructuralTypeShaperExpression { ValueBufferExpression: JsonQueryExpression jsonQuery } jsonShaper:
+                    return jsonShaper.Update(LiftJsonQuery(jsonQuery));
+
+                case CollectionResultExpression { QueryExpression: JsonQueryExpression jsonQuery } collectionResult:
+                    return collectionResult.Update(LiftJsonQuery(jsonQuery));
+
+                default:
+                    throw new UnreachableException("Unexpected complex property binding on owned entity type.");
+            }
+
+            JsonQueryExpression LiftJsonQuery(JsonQueryExpression jsonQuery)
+            {
+                Check.DebugAssert(jsonQuery.Path.Count == 0, "Complex JSON property on a non-JSON owned type should be at the root.");
+
+                var liftedJsonQuery = new JsonQueryExpression(
+                    jsonQuery.StructuralType,
+                    subquery.GenerateOuterColumn(tableAlias, jsonQuery.JsonColumn),
+                    keyPropertyMap: null,
+                    jsonQuery.Type,
+                    jsonQuery.IsCollection);
+
+                return makeNullable ? liftedJsonQuery.MakeNullable() : liftedJsonQuery;
+            }
         }
 
         static TableExpressionBase FindRootTableExpressionForColumn(SelectExpression select, ColumnExpression column)

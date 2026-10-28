@@ -1,6 +1,8 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using Microsoft.EntityFrameworkCore.Internal;
+
 namespace Microsoft.EntityFrameworkCore.Metadata.Internal;
 
 /// <summary>
@@ -98,6 +100,12 @@ public class ComplexPropertySnapshot
         }
         else
         {
+            // Default names are derived from the declaring type, so regenerate them for the new one
+            var complexTypeName = ComplexType.Name
+                == ComplexProperty.DeclaringType.GetOwnedName(ComplexType.ClrType.ShortDisplayName(), ComplexProperty.Name)
+                    ? null
+                    : ComplexType.Name;
+
             complexPropertyBuilder = ComplexProperty.IsIndexerProperty()
                 ? typeBaseBuilder.ComplexIndexerProperty(
                     ComplexProperty.ClrType,
@@ -109,7 +117,7 @@ public class ComplexPropertySnapshot
                     ComplexProperty.ClrType,
                     ComplexProperty.Name,
                     ComplexProperty.GetIdentifyingMemberInfo(),
-                    ComplexType.Name,
+                    complexTypeName,
                     ComplexType.ClrType,
                     ComplexProperty.IsCollection,
                     configurationSource);

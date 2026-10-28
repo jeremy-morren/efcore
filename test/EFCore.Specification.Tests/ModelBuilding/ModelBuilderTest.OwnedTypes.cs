@@ -2185,5 +2185,187 @@ public abstract partial class ModelBuilderTest
                 Assert.Throws<InvalidOperationException>(() => modelBuilder.Entity<CustomerDetails>().Property<string>("Customer.Name"))
                     .Message);
         }
+
+        [Fact]
+        public virtual void Can_configure_complex_property_on_owned_type()
+        {
+            var modelBuilder = CreateModelBuilder();
+
+            modelBuilder.Entity<OwnerOfOwnedWithComplex>(b =>
+            {
+                b.Ignore(e => e.OwnedCollection);
+                b.OwnsOne(
+                    e => e.Owned, ob =>
+                    {
+                        ob.Ignore(o => o.ComplexCollection);
+                        ob.ComplexProperty(
+                            o => o.Complex, cb =>
+                            {
+                                cb.HasTypeAnnotation("foo", "bar");
+                                cb.Property(c => c.Value).HasMaxLength(20);
+                            });
+                    });
+            });
+
+            var model = modelBuilder.FinalizeModel();
+
+            var owned = model.FindEntityType(typeof(OwnerOfOwnedWithComplex))!
+                .FindNavigation(nameof(OwnerOfOwnedWithComplex.Owned))!.TargetEntityType;
+            var complexProperty = owned.GetComplexProperties().Single();
+            Assert.Equal(nameof(OwnedWithComplex.Complex), complexProperty.Name);
+            Assert.False(complexProperty.IsCollection);
+            Assert.Equal("bar", complexProperty.ComplexType["foo"]);
+            Assert.Equal(20, complexProperty.ComplexType.FindProperty(nameof(ComplexInOwned.Value))!.GetMaxLength());
+            Assert.NotNull(complexProperty.ComplexType.FindProperty(nameof(ComplexInOwned.Number)));
+        }
+
+        [Fact]
+        public virtual void Can_configure_complex_property_on_owned_type_by_name()
+        {
+            var modelBuilder = CreateModelBuilder();
+
+            modelBuilder.Entity<OwnerOfOwnedWithComplex>(b =>
+            {
+                b.Ignore(e => e.OwnedCollection);
+                b.OwnsOne(
+                    e => e.Owned, ob =>
+                    {
+                        ob.Ignore(o => o.ComplexCollection);
+                        ob.ComplexProperty<ComplexInOwned>(
+                            nameof(OwnedWithComplex.Complex), cb => cb.Property(c => c.Value).HasMaxLength(20));
+                    });
+            });
+
+            var model = modelBuilder.FinalizeModel();
+
+            var owned = model.FindEntityType(typeof(OwnerOfOwnedWithComplex))!
+                .FindNavigation(nameof(OwnerOfOwnedWithComplex.Owned))!.TargetEntityType;
+            var complexProperty = owned.GetComplexProperties().Single();
+            Assert.Equal(nameof(OwnedWithComplex.Complex), complexProperty.Name);
+            Assert.Equal(20, complexProperty.ComplexType.FindProperty(nameof(ComplexInOwned.Value))!.GetMaxLength());
+        }
+
+        [Fact]
+        public virtual void Can_configure_complex_property_on_owned_type_collection()
+        {
+            var modelBuilder = CreateModelBuilder();
+
+            modelBuilder.Entity<OwnerOfOwnedWithComplex>(b =>
+            {
+                b.Ignore(e => e.Owned);
+                b.OwnsMany(
+                    e => e.OwnedCollection, ob =>
+                    {
+                        ob.Ignore(o => o.ComplexCollection);
+                        ob.ComplexProperty(o => o.Complex);
+                    });
+            });
+
+            var model = modelBuilder.FinalizeModel();
+
+            var owned = model.FindEntityType(typeof(OwnerOfOwnedWithComplex))!
+                .FindNavigation(nameof(OwnerOfOwnedWithComplex.OwnedCollection))!.TargetEntityType;
+            var complexProperty = owned.GetComplexProperties().Single();
+            Assert.Equal(nameof(OwnedWithComplex.Complex), complexProperty.Name);
+            Assert.Equal(
+                [nameof(ComplexInOwned.Number), nameof(ComplexInOwned.Value)],
+                complexProperty.ComplexType.GetProperties().Select(p => p.Name));
+        }
+
+        [Fact]
+        public virtual void Can_configure_complex_property_on_owned_types_on_base_and_derived_owner()
+        {
+            var modelBuilder = CreateModelBuilder();
+
+            modelBuilder.Entity<OwnerOfOwnedWithComplex>(b =>
+            {
+                b.Ignore(e => e.OwnedCollection);
+                b.OwnsOne(
+                    e => e.Owned, ob =>
+                    {
+                        ob.Ignore(o => o.ComplexCollection);
+                        ob.ComplexProperty(o => o.Complex);
+                    });
+            });
+            modelBuilder.Entity<DerivedOwnerOfOwnedWithComplex>(b => b.OwnsOne(
+                e => e.DerivedOwned, ob =>
+                {
+                    ob.Ignore(o => o.ComplexCollection);
+                    ob.ComplexProperty(o => o.Complex);
+                }));
+
+            var model = modelBuilder.FinalizeModel();
+
+            Assert.Null(model.FindEntityType(typeof(ComplexInOwned)));
+            var owned = model.FindEntityType(typeof(OwnerOfOwnedWithComplex))!
+                .FindNavigation(nameof(OwnerOfOwnedWithComplex.Owned))!.TargetEntityType;
+            var derivedOwned = model.FindEntityType(typeof(DerivedOwnerOfOwnedWithComplex))!
+                .FindNavigation(nameof(DerivedOwnerOfOwnedWithComplex.DerivedOwned))!.TargetEntityType;
+            Assert.Equal(owned.Name + ".Complex#ComplexInOwned", owned.GetComplexProperties().Single().ComplexType.Name);
+            Assert.Equal(derivedOwned.Name + ".Complex#ComplexInOwned", derivedOwned.GetComplexProperties().Single().ComplexType.Name);
+        }
+
+        [Fact]
+        public virtual void Can_configure_complex_property_on_owned_type_using_attributes()
+        {
+            var modelBuilder = CreateModelBuilder();
+
+            modelBuilder.Entity<OwnerOfAttributeOwned>();
+
+            var model = modelBuilder.FinalizeModel();
+
+            var owned = model.FindEntityType(typeof(OwnerOfAttributeOwned))!
+                .FindNavigation(nameof(OwnerOfAttributeOwned.Owneds))!.TargetEntityType;
+            Assert.True(owned.IsOwned());
+            var complexProperty = owned.GetComplexProperties().Single();
+            Assert.Equal(nameof(AttributeOwnedWithComplex.Complex), complexProperty.Name);
+            Assert.Null(model.FindEntityType(typeof(AttributeComplexInOwned)));
+        }
+
+        [Fact]
+        public virtual void Can_configure_complex_property_on_owned_type_using_configure_conventions()
+        {
+            var modelBuilder = CreateModelBuilder(c => c.ComplexProperties<ComplexInOwned>());
+
+            modelBuilder.Entity<OwnerOfOwnedWithComplex>(b =>
+            {
+                b.Ignore(e => e.OwnedCollection);
+                b.OwnsOne(e => e.Owned, ob => ob.Ignore(o => o.ComplexCollection));
+            });
+
+            var model = modelBuilder.FinalizeModel();
+
+            var owned = model.FindEntityType(typeof(OwnerOfOwnedWithComplex))!
+                .FindNavigation(nameof(OwnerOfOwnedWithComplex.Owned))!.TargetEntityType;
+            Assert.Equal(nameof(OwnedWithComplex.Complex), owned.GetComplexProperties().Single().Name);
+            Assert.Null(model.FindEntityType(typeof(ComplexInOwned)));
+        }
+
+        [Fact]
+        public virtual void Can_configure_same_complex_type_on_owner_and_owned_type()
+        {
+            var modelBuilder = CreateModelBuilder();
+
+            modelBuilder.Entity<OwnerOfOwnedAndComplex>(b =>
+            {
+                b.ComplexProperty(e => e.Complex);
+                b.OwnsOne(
+                    e => e.Owned, ob =>
+                    {
+                        ob.Ignore(o => o.ComplexCollection);
+                        ob.ComplexProperty(o => o.Complex);
+                    });
+            });
+
+            var model = modelBuilder.FinalizeModel();
+
+            var owner = model.FindEntityType(typeof(OwnerOfOwnedAndComplex))!;
+            var owned = owner.FindNavigation(nameof(OwnerOfOwnedAndComplex.Owned))!.TargetEntityType;
+            var ownerComplexType = owner.GetComplexProperties().Single().ComplexType;
+            var ownedComplexType = owned.GetComplexProperties().Single().ComplexType;
+            Assert.Equal(typeof(ComplexInOwned), ownedComplexType.ClrType);
+            Assert.NotSame(ownerComplexType, ownedComplexType);
+            Assert.NotEqual(ownerComplexType.Name, ownedComplexType.Name);
+        }
     }
 }
