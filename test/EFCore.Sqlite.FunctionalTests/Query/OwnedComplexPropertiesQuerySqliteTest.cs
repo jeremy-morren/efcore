@@ -8,9 +8,9 @@ public class OwnedComplexPropertiesQuerySqliteTest(NonSharedFixture fixture) : O
     protected override ITestStoreFactory NonSharedTestStoreFactory
         => SqliteTestStoreFactory.Instance;
 
-    public override async Task Owned_reference_table_splitting()
+    public override async Task Owned_reference()
     {
-        await base.Owned_reference_table_splitting();
+        await base.Owned_reference();
 
         AssertSql(
             """
@@ -494,9 +494,9 @@ LIMIT 2
 """);
     }
 
-    public override async Task Delete_owner_with_owned_complex_property()
+    public override async Task Delete_owner_with_owned_complex_property_separate_table()
     {
-        await base.Delete_owner_with_owned_complex_property();
+        await base.Delete_owner_with_owned_complex_property_separate_table();
 
         AssertSql(
             """
@@ -519,6 +519,26 @@ RETURNING 1;
 SELECT "o"."Id", "o"."Name", "o0"."OwnerId", "o0"."Name", "o0"."Address_City", "o0"."Address_Street", "o0"."Address_Country_Code", "o0"."Address_Country_Name"
 FROM "Owners" AS "o"
 LEFT JOIN "Owned" AS "o0" ON "o"."Id" = "o0"."OwnerId"
+LIMIT 2
+""");
+    }
+
+    public override async Task Delete_owner_with_owned_complex_property()
+    {
+        await base.Delete_owner_with_owned_complex_property();
+
+        AssertSql(
+            """
+@p0='1'
+
+DELETE FROM "Owners"
+WHERE "Id" = @p0
+RETURNING 1;
+""",
+            //
+            """
+SELECT "o"."Id", "o"."Name", "o"."Owned_Name", "o"."Owned_Address_City", "o"."Owned_Address_Street", "o"."Owned_Address_Country_Code", "o"."Owned_Address_Country_Name"
+FROM "Owners" AS "o"
 LIMIT 2
 """);
     }

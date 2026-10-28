@@ -8,9 +8,9 @@ public class OwnedComplexPropertiesQuerySqlServerTest(NonSharedFixture fixture) 
     protected override ITestStoreFactory NonSharedTestStoreFactory
         => SqlServerTestStoreFactory.Instance;
 
-    public override async Task Owned_reference_table_splitting()
+    public override async Task Owned_reference()
     {
-        await base.Owned_reference_table_splitting();
+        await base.Owned_reference();
 
         AssertSql(
             """
@@ -500,9 +500,9 @@ WHERE [o].[Id] = 1
 """);
     }
 
-    public override async Task Delete_owner_with_owned_complex_property()
+    public override async Task Delete_owner_with_owned_complex_property_separate_table()
     {
-        await base.Delete_owner_with_owned_complex_property();
+        await base.Delete_owner_with_owned_complex_property_separate_table();
 
         AssertSql(
             """
@@ -522,6 +522,27 @@ WHERE [Id] = @p1;
 SELECT TOP(2) [o].[Id], [o].[Name], [o0].[OwnerId], [o0].[Name], [o0].[Address_City], [o0].[Address_Street], [o0].[Address_Country_Code], [o0].[Address_Country_Name]
 FROM [Owners] AS [o]
 LEFT JOIN [Owned] AS [o0] ON [o].[Id] = [o0].[OwnerId]
+""");
+    }
+
+    public override async Task Delete_owner_with_owned_complex_property()
+    {
+        await base.Delete_owner_with_owned_complex_property();
+
+        AssertSql(
+            """
+@p0='1'
+
+SET IMPLICIT_TRANSACTIONS OFF;
+SET NOCOUNT ON;
+DELETE FROM [Owners]
+OUTPUT 1
+WHERE [Id] = @p0;
+""",
+            //
+            """
+SELECT TOP(2) [o].[Id], [o].[Name], [o].[Owned_Name], [o].[Owned_Address_City], [o].[Owned_Address_Street], [o].[Owned_Address_Country_Code], [o].[Owned_Address_Country_Name]
+FROM [Owners] AS [o]
 """);
     }
 }
