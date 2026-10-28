@@ -2512,6 +2512,42 @@ public class CSharpRuntimeModelCodeGenerator : ICompiledModelCodeGenerator
         mainBuilder.AppendLine("}");
     }
 
+    private void CreateComplexCollectionCounts(
+        IComplexProperty complexProperty,
+        string declaringTypeAccess,
+        IndentedStringBuilder mainBuilder,
+        bool nullable)
+    {
+        var complexTypeAccess = declaringTypeAccess
+            + ".FindComplexProperty(" + _code.Literal(complexProperty.Name) + ")"
+            + (nullable ? "!" : "")
+            + ".ComplexType";
+
+        if (complexProperty.IsCollection)
+        {
+            CreateCounts(complexTypeAccess, ((IRuntimeComplexType)complexProperty.ComplexType).CalculateCounts(), mainBuilder);
+        }
+
+        foreach (var nestedComplexProperty in complexProperty.ComplexType.GetComplexProperties())
+        {
+            CreateComplexCollectionCounts(nestedComplexProperty, complexTypeAccess, mainBuilder, nullable);
+        }
+    }
+
+    private void CreateCounts(string target, PropertyCounts counts, IndentedStringBuilder mainBuilder)
+        => mainBuilder
+            .Append(target).AppendLine(".SetCounts(new PropertyCounts(")
+            .IncrementIndent()
+            .Append("propertyCount: ").Append(_code.Literal(counts.PropertyCount)).AppendLine(",")
+            .Append("navigationCount: ").Append(_code.Literal(counts.NavigationCount)).AppendLine(",")
+            .Append("complexPropertyCount: ").Append(_code.Literal(counts.ComplexPropertyCount)).AppendLine(",")
+            .Append("complexCollectionCount: ").Append(_code.Literal(counts.ComplexCollectionCount)).AppendLine(",")
+            .Append("originalValueCount: ").Append(_code.Literal(counts.OriginalValueCount)).AppendLine(",")
+            .Append("shadowCount: ").Append(_code.Literal(counts.ShadowCount)).AppendLine(",")
+            .Append("relationshipCount: ").Append(_code.Literal(counts.RelationshipCount)).AppendLine(",")
+            .Append("storeGeneratedCount: ").Append(_code.Literal(counts.StoreGeneratedCount)).AppendLine("));")
+            .DecrementIndent();
+
     private void CreateForeignKey(
         IForeignKey foreignKey,
         int foreignKeyNumber,
@@ -3146,19 +3182,13 @@ public class CSharpRuntimeModelCodeGenerator : ICompiledModelCodeGenerator
                     .DecrementIndent();
 
                 AddNamespace(typeof(PropertyCounts), parameters.Namespaces);
-                var counts = runtimeType.CalculateCounts();
-                mainBuilder
-                    .Append(parameters.TargetName).AppendLine(".SetCounts(new PropertyCounts(")
-                    .IncrementIndent()
-                    .Append("propertyCount: ").Append(_code.Literal(counts.PropertyCount)).AppendLine(",")
-                    .Append("navigationCount: ").Append(_code.Literal(counts.NavigationCount)).AppendLine(",")
-                    .Append("complexPropertyCount: ").Append(_code.Literal(counts.ComplexPropertyCount)).AppendLine(",")
-                    .Append("complexCollectionCount: ").Append(_code.Literal(counts.ComplexCollectionCount)).AppendLine(",")
-                    .Append("originalValueCount: ").Append(_code.Literal(counts.OriginalValueCount)).AppendLine(",")
-                    .Append("shadowCount: ").Append(_code.Literal(counts.ShadowCount)).AppendLine(",")
-                    .Append("relationshipCount: ").Append(_code.Literal(counts.RelationshipCount)).AppendLine(",")
-                    .Append("storeGeneratedCount: ").Append(_code.Literal(counts.StoreGeneratedCount)).AppendLine("));")
-                    .DecrementIndent();
+                CreateCounts(parameters.TargetName, runtimeType.CalculateCounts(), mainBuilder);
+
+                // Presetting the entity type counts skips calculating them for its complex collections
+                foreach (var complexProperty in entityType.GetDeclaredComplexProperties())
+                {
+                    CreateComplexCollectionCounts(complexProperty, parameters.TargetName, mainBuilder, nullable);
+                }
 
                 Check.DebugAssert(
                     unsafeAccessors.Count == 0,

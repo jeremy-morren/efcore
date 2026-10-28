@@ -2127,6 +2127,15 @@ public partial class PrincipalDerivedEntityType
             shadowCount: 2,
             relationshipCount: 3,
             storeGeneratedCount: 3));
+        runtimeEntityType.FindComplexProperty("ManyOwned").ComplexType.SetCounts(new PropertyCounts(
+            propertyCount: 24,
+            navigationCount: 0,
+            complexPropertyCount: 1,
+            complexCollectionCount: 0,
+            originalValueCount: 25,
+            shadowCount: 0,
+            relationshipCount: 0,
+            storeGeneratedCount: 0));
         runtimeEntityType.AddAnnotation("Relational:FunctionName", null);
         runtimeEntityType.AddAnnotation("Relational:Schema", null);
         runtimeEntityType.AddAnnotation("Relational:SqlQuery", "select * from PrincipalBase");
