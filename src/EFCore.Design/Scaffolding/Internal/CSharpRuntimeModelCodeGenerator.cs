@@ -3073,96 +3073,58 @@ public class CSharpRuntimeModelCodeGenerator : ICompiledModelCodeGenerator
                 var runtimeType = (IRuntimeEntityType)entityType;
                 var unsafeAccessors = new HashSet<string>();
 
-                var originalValuesFactory = OriginalValuesFactoryFactory.Instance.CreateExpression(runtimeType);
-                mainBuilder
-                    .Append(parameters.TargetName).AppendLine(".SetOriginalValuesFactory(")
-                    .IncrementIndent()
-                    .AppendLines(
-                        _code.Expression(
-                            originalValuesFactory, parameters.Namespaces, unsafeAccessors,
-                            (IReadOnlyDictionary<object, string>)parameters.ScopeVariables, memberAccessReplacements),
-                        skipFinalNewline: true)
-                    .AppendLine(");")
-                    .DecrementIndent();
-
-                var storeGeneratedValuesFactory = StoreGeneratedValuesFactoryFactory.Instance.CreateEmptyExpression(runtimeType);
-                mainBuilder
-                    .Append(parameters.TargetName).AppendLine(".SetStoreGeneratedValuesFactory(")
-                    .IncrementIndent()
-                    .AppendLines(
-                        _code.Expression(
-                            storeGeneratedValuesFactory, parameters.Namespaces, unsafeAccessors,
-                            (IReadOnlyDictionary<object, string>)parameters.ScopeVariables, memberAccessReplacements),
-                        skipFinalNewline: true)
-                    .AppendLine(");")
-                    .DecrementIndent();
-
-                var temporaryValuesFactory = TemporaryValuesFactoryFactory.Instance.CreateExpression(runtimeType);
-                mainBuilder
-                    .Append(parameters.TargetName).AppendLine(".SetTemporaryValuesFactory(")
-                    .IncrementIndent()
-                    .AppendLines(
-                        _code.Expression(
-                            temporaryValuesFactory, parameters.Namespaces, unsafeAccessors,
-                            (IReadOnlyDictionary<object, string>)parameters.ScopeVariables, memberAccessReplacements),
-                        skipFinalNewline: true)
-                    .AppendLine(");")
-                    .DecrementIndent();
-
-                var shadowValuesFactory = ShadowValuesFactoryFactory.Instance.CreateExpression(runtimeType);
-                mainBuilder
-                    .Append(parameters.TargetName).AppendLine(".SetShadowValuesFactory(")
-                    .IncrementIndent()
-                    .AppendLines(
-                        _code.Expression(
-                            shadowValuesFactory, parameters.Namespaces, unsafeAccessors,
-                            (IReadOnlyDictionary<object, string>)parameters.ScopeVariables, memberAccessReplacements),
-                        skipFinalNewline: true)
-                    .AppendLine(");")
-                    .DecrementIndent();
-
-                var emptyShadowValuesFactory = EmptyShadowValuesFactoryFactory.Instance.CreateEmptyExpression(runtimeType);
-                mainBuilder
-                    .Append(parameters.TargetName).AppendLine(".SetEmptyShadowValuesFactory(")
-                    .IncrementIndent()
-                    .AppendLines(
-                        _code.Expression(
-                            emptyShadowValuesFactory, parameters.Namespaces, unsafeAccessors,
-                            (IReadOnlyDictionary<object, string>)parameters.ScopeVariables, memberAccessReplacements),
-                        skipFinalNewline: true)
-                    .AppendLine(");")
-                    .DecrementIndent();
-
-                var relationshipSnapshotFactory = RelationshipSnapshotFactoryFactory.Instance.CreateExpression(runtimeType);
-                mainBuilder
-                    .Append(parameters.TargetName).AppendLine(".SetRelationshipSnapshotFactory(")
-                    .IncrementIndent()
-                    .AppendLines(
-                        _code.Expression(
-                            relationshipSnapshotFactory, parameters.Namespaces, unsafeAccessors,
-                            (IReadOnlyDictionary<object, string>)parameters.ScopeVariables, memberAccessReplacements),
-                        skipFinalNewline: true)
-                    .AppendLine(");")
-                    .DecrementIndent();
+                CreateSnapshotFactories(parameters.TargetName, runtimeType);
+                CreateFactory(
+                    parameters.TargetName, nameof(RuntimeEntityType.SetRelationshipSnapshotFactory),
+                    RelationshipSnapshotFactoryFactory.Instance.CreateExpression(runtimeType));
 
                 AddNamespace(typeof(PropertyCounts), parameters.Namespaces);
-                var counts = runtimeType.CalculateCounts();
-                mainBuilder
-                    .Append(parameters.TargetName).AppendLine(".SetCounts(new PropertyCounts(")
-                    .IncrementIndent()
-                    .Append("propertyCount: ").Append(_code.Literal(counts.PropertyCount)).AppendLine(",")
-                    .Append("navigationCount: ").Append(_code.Literal(counts.NavigationCount)).AppendLine(",")
-                    .Append("complexPropertyCount: ").Append(_code.Literal(counts.ComplexPropertyCount)).AppendLine(",")
-                    .Append("complexCollectionCount: ").Append(_code.Literal(counts.ComplexCollectionCount)).AppendLine(",")
-                    .Append("originalValueCount: ").Append(_code.Literal(counts.OriginalValueCount)).AppendLine(",")
-                    .Append("shadowCount: ").Append(_code.Literal(counts.ShadowCount)).AppendLine(",")
-                    .Append("relationshipCount: ").Append(_code.Literal(counts.RelationshipCount)).AppendLine(",")
-                    .Append("storeGeneratedCount: ").Append(_code.Literal(counts.StoreGeneratedCount)).AppendLine("));")
-                    .DecrementIndent();
+                CreateCounts(parameters.TargetName, runtimeType.CalculateCounts(), mainBuilder);
+
+                // Complex collection elements are tracked by their own entries, so their complex types need their own factories and counts,
+                // which aren't created at runtime when the entity type ones are preset
+                foreach (var complexCollection in GetComplexCollections(entityType))
+                {
+                    var complexType = (IRuntimeComplexType)complexCollection.ComplexType;
+                    var complexTypeVariable = parameters.ScopeVariables[complexType];
+                    CreateSnapshotFactories(complexTypeVariable, complexType);
+                    CreateCounts(complexTypeVariable, complexType.CalculateCounts(), mainBuilder);
+                }
 
                 Check.DebugAssert(
                     unsafeAccessors.Count == 0,
                     "Generated unsafe accessors not handled: " + string.Join(Environment.NewLine, unsafeAccessors));
+
+                void CreateSnapshotFactories(string target, IRuntimeTypeBase structuralType)
+                {
+                    CreateFactory(
+                        target, nameof(RuntimeTypeBase.SetOriginalValuesFactory),
+                        OriginalValuesFactoryFactory.Instance.CreateExpression(structuralType));
+                    CreateFactory(
+                        target, nameof(RuntimeTypeBase.SetStoreGeneratedValuesFactory),
+                        StoreGeneratedValuesFactoryFactory.Instance.CreateEmptyExpression(structuralType));
+                    CreateFactory(
+                        target, nameof(RuntimeTypeBase.SetTemporaryValuesFactory),
+                        TemporaryValuesFactoryFactory.Instance.CreateExpression(structuralType));
+                    CreateFactory(
+                        target, nameof(RuntimeTypeBase.SetShadowValuesFactory),
+                        ShadowValuesFactoryFactory.Instance.CreateExpression(structuralType));
+                    CreateFactory(
+                        target, nameof(RuntimeTypeBase.SetEmptyShadowValuesFactory),
+                        EmptyShadowValuesFactoryFactory.Instance.CreateEmptyExpression(structuralType));
+                }
+
+                void CreateFactory(string target, string methodName, LambdaExpression factory)
+                    => mainBuilder
+                        .Append(target).Append(".").Append(methodName).AppendLine("(")
+                        .IncrementIndent()
+                        .AppendLines(
+                            _code.Expression(
+                                factory, parameters.Namespaces, unsafeAccessors,
+                                (IReadOnlyDictionary<object, string>)parameters.ScopeVariables, memberAccessReplacements),
+                            skipFinalNewline: true)
+                        .AppendLine(");")
+                        .DecrementIndent();
             }
 
             CreateAnnotations(entityType, _annotationCodeGenerator.Generate, parameters);
@@ -3222,6 +3184,36 @@ public class CSharpRuntimeModelCodeGenerator : ICompiledModelCodeGenerator
             }
         }
     }
+
+    /// <summary>
+    ///     Gets the complex collections of a type, including the ones nested in the element types of other complex collections.
+    /// </summary>
+    /// <param name="structuralType">The type.</param>
+    /// <returns>The complex collections.</returns>
+    private static IEnumerable<IComplexProperty> GetComplexCollections(ITypeBase structuralType)
+        => structuralType.GetFlattenedComplexProperties()
+            .Where(p => p.IsCollection)
+            .SelectMany(p => GetComplexCollections(p.ComplexType).Prepend(p));
+
+    /// <summary>
+    ///     Generates the call that presets the property counts of a runtime type.
+    /// </summary>
+    /// <param name="target">The variable referencing the runtime type.</param>
+    /// <param name="counts">The counts to set.</param>
+    /// <param name="mainBuilder">The builder code is added to.</param>
+    private void CreateCounts(string target, PropertyCounts counts, IndentedStringBuilder mainBuilder)
+        => mainBuilder
+            .Append(target).AppendLine(".SetCounts(new PropertyCounts(")
+            .IncrementIndent()
+            .Append("propertyCount: ").Append(_code.Literal(counts.PropertyCount)).AppendLine(",")
+            .Append("navigationCount: ").Append(_code.Literal(counts.NavigationCount)).AppendLine(",")
+            .Append("complexPropertyCount: ").Append(_code.Literal(counts.ComplexPropertyCount)).AppendLine(",")
+            .Append("complexCollectionCount: ").Append(_code.Literal(counts.ComplexCollectionCount)).AppendLine(",")
+            .Append("originalValueCount: ").Append(_code.Literal(counts.OriginalValueCount)).AppendLine(",")
+            .Append("shadowCount: ").Append(_code.Literal(counts.ShadowCount)).AppendLine(",")
+            .Append("relationshipCount: ").Append(_code.Literal(counts.RelationshipCount)).AppendLine(",")
+            .Append("storeGeneratedCount: ").Append(_code.Literal(counts.StoreGeneratedCount)).AppendLine("));")
+            .DecrementIndent();
 
     private static void CreateAnnotations<TAnnotatable>(
         TAnnotatable annotatable,

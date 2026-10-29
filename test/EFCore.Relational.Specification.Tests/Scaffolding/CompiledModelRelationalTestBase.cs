@@ -1153,6 +1153,107 @@ public abstract class CompiledModelRelationalTestBase(NonSharedFixture fixture) 
             });
 
     [Fact]
+    public virtual Task Complex_collection_change_tracking()
+        => Test(
+            modelBuilder => modelBuilder.Entity<EntityWithComplexCollection>(
+                eb => eb.ComplexCollection(e => e.Tags, tb => tb.ToJson())),
+            model =>
+            {
+                var tags = model.FindEntityType(typeof(EntityWithComplexCollection))!
+                    .FindComplexProperty(nameof(EntityWithComplexCollection.Tags))!;
+                Assert.True(tags.IsCollection);
+                AssertSnapshotFactoriesGenerated(tags.ComplexType);
+            },
+            async c =>
+            {
+                c.Add(new EntityWithComplexCollection { Tags = [new TagComplex { Text = "a" }, new TagComplex { Text = "b" }] });
+                await c.SaveChangesAsync();
+                c.ChangeTracker.Clear();
+
+                var entity = await c.Set<EntityWithComplexCollection>().SingleAsync();
+                Assert.Equal(["a", "b"], entity.Tags.Select(t => t.Text));
+
+                // Changing the loaded elements uses their generated snapshots
+                entity.Tags[0].Text = "a2";
+                entity.Tags.Add(new TagComplex { Text = "c" });
+                entity.Tags.RemoveAt(1);
+                entity.Tags.Reverse();
+                c.ChangeTracker.DetectChanges();
+                Assert.Equal(EntityState.Modified, c.Entry(entity).State);
+
+                await c.SaveChangesAsync();
+                c.ChangeTracker.Clear();
+
+                entity = await c.Set<EntityWithComplexCollection>().SingleAsync();
+                Assert.Equal(["c", "a2"], entity.Tags.Select(t => t.Text));
+            });
+
+    [Fact]
+    public virtual Task Nested_complex_collection_change_tracking()
+        => Test(
+            modelBuilder => modelBuilder.Entity<EntityWithNestedComplexCollection>(
+                eb => eb.ComplexCollection(e => e.Groups, gb => gb.ToJson())),
+            model =>
+            {
+                var groups = model.FindEntityType(typeof(EntityWithNestedComplexCollection))!
+                    .FindComplexProperty(nameof(EntityWithNestedComplexCollection.Groups))!;
+                var tags = groups.ComplexType.FindComplexProperty(nameof(TagGroupComplex.Tags))!;
+                Assert.True(tags.IsCollection);
+                AssertSnapshotFactoriesGenerated(groups.ComplexType);
+                AssertSnapshotFactoriesGenerated(tags.ComplexType);
+            },
+            async c =>
+            {
+                c.Add(
+                    new EntityWithNestedComplexCollection
+                    {
+                        Groups = [new TagGroupComplex { Name = "g", Tags = [new TagComplex { Text = "a" }, new TagComplex { Text = "b" }] }]
+                    });
+                await c.SaveChangesAsync();
+                c.ChangeTracker.Clear();
+
+                var entity = await c.Set<EntityWithNestedComplexCollection>().SingleAsync();
+                Assert.Equal(["a", "b"], entity.Groups.Single().Tags.Select(t => t.Text));
+
+                // Changing the loaded elements uses their generated snapshots, including the nested ones
+                var group = entity.Groups.Single();
+                group.Tags[1].Text = "b2";
+                group.Tags.Insert(0, new TagComplex { Text = "z" });
+                entity.Groups.Add(new TagGroupComplex { Name = "h", Tags = [new TagComplex { Text = "x" }] });
+                c.ChangeTracker.DetectChanges();
+                Assert.Equal(EntityState.Modified, c.Entry(entity).State);
+
+                await c.SaveChangesAsync();
+                c.ChangeTracker.Clear();
+
+                entity = await c.Set<EntityWithNestedComplexCollection>().SingleAsync();
+                Assert.Equal(["g", "h"], entity.Groups.Select(g => g.Name));
+                Assert.Equal(["z", "a", "b2"], entity.Groups[0].Tags.Select(t => t.Text));
+                Assert.Equal(["x"], entity.Groups[1].Tags.Select(t => t.Text));
+
+                entity.Groups.RemoveAt(0);
+                entity.Groups[0].Tags.Clear();
+                await c.SaveChangesAsync();
+                c.ChangeTracker.Clear();
+
+                entity = await c.Set<EntityWithNestedComplexCollection>().SingleAsync();
+                Assert.Equal("h", entity.Groups.Single().Name);
+                Assert.Empty(entity.Groups.Single().Tags);
+            });
+
+    // Factories missing from the compiled model are compiled at runtime, which isn't supported without dynamic code
+    private static void AssertSnapshotFactoriesGenerated(IComplexType complexType)
+    {
+        var runtimeType = (RuntimeTypeBase)complexType;
+        var assembly = complexType.Model.GetType().Assembly;
+        Assert.Same(assembly, runtimeType.OriginalValuesFactory.Method.DeclaringType?.Assembly);
+        Assert.Same(assembly, runtimeType.StoreGeneratedValuesFactory.Method.DeclaringType?.Assembly);
+        Assert.Same(assembly, runtimeType.TemporaryValuesFactory.Method.DeclaringType?.Assembly);
+        Assert.Same(assembly, runtimeType.ShadowValuesFactory.Method.DeclaringType?.Assembly);
+        Assert.Same(assembly, runtimeType.EmptyShadowValuesFactory.Method.DeclaringType?.Assembly);
+    }
+
+    [Fact]
     public virtual Task DbFunctions()
         => Test<DbFunctionContext>(
             assertModel: model =>
@@ -1559,6 +1660,29 @@ public partial class DbContextModel
     public class Author
     {
         public string Name { get; set; } = "";
+    }
+
+    public class EntityWithComplexCollection
+    {
+        public int Id { get; set; }
+        public List<TagComplex> Tags { get; set; } = [];
+    }
+
+    public class EntityWithNestedComplexCollection
+    {
+        public int Id { get; set; }
+        public List<TagGroupComplex> Groups { get; set; } = [];
+    }
+
+    public class TagGroupComplex
+    {
+        public string Name { get; set; } = null!;
+        public List<TagComplex> Tags { get; set; } = [];
+    }
+
+    public class TagComplex
+    {
+        public string Text { get; set; } = null!;
     }
 
     protected override BuildSource AddReferences(BuildSource build, [CallerFilePath] string filePath = "")
