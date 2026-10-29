@@ -814,6 +814,31 @@ public partial class RelationalModelValidatorTest
     }
 
     [Fact]
+    public void Throws_when_complex_property_in_json_owned_entity_is_mapped_to_json_column()
+    {
+        var modelBuilder = CreateConventionModelBuilder();
+        modelBuilder.Entity<ValidatorJsonEntityBasic>(b =>
+        {
+            b.Ignore(x => x.OwnedCollection);
+            b.OwnsOne(
+                x => x.OwnedReference, bb =>
+                {
+                    bb.ToJson("json_data");
+                    bb.ComplexProperty(x => x.NestedReference, nb => nb.ToJson("nested_json_data"));
+                    bb.Ignore(x => x.NestedCollection);
+                });
+        });
+
+        VerifyError(
+            RelationalStrings.NestedComplexPropertyJsonColumn(
+                "ValidatorJsonOwnedRoot.NestedReference",
+                "nested_json_data",
+                "ValidatorJsonOwnedRoot",
+                "json_data"),
+            modelBuilder);
+    }
+
+    [Fact]
     public void Throws_when_complex_properties_on_base_and_derived_types_are_mapped_to_same_json_column()
     {
         var modelBuilder = CreateConventionModelBuilder();
