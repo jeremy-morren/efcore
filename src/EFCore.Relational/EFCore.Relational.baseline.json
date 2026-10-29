@@ -13402,6 +13402,9 @@
           "Member": "virtual void ValidateSharedIndexesCompatibility(System.Collections.Generic.IReadOnlyList<Microsoft.EntityFrameworkCore.Metadata.IEntityType> mappedTypes, in Microsoft.EntityFrameworkCore.Metadata.StoreObjectIdentifier table, Microsoft.EntityFrameworkCore.Diagnostics.IDiagnosticsLogger<Microsoft.EntityFrameworkCore.DbLoggerCategory.Model.Validation> logger);"
         },
         {
+          "Member": "virtual void ValidateSharedJsonColumns(System.Collections.Generic.IReadOnlyList<Microsoft.EntityFrameworkCore.Metadata.IEntityType> mappedTypes, in Microsoft.EntityFrameworkCore.Metadata.StoreObjectIdentifier table, Microsoft.EntityFrameworkCore.Diagnostics.IDiagnosticsLogger<Microsoft.EntityFrameworkCore.DbLoggerCategory.Model.Validation> logger);"
+        },
+        {
           "Member": "virtual void ValidateSharedKeysCompatibility(System.Collections.Generic.IReadOnlyList<Microsoft.EntityFrameworkCore.Metadata.IEntityType> mappedTypes, in Microsoft.EntityFrameworkCore.Metadata.StoreObjectIdentifier table, Microsoft.EntityFrameworkCore.Diagnostics.IDiagnosticsLogger<Microsoft.EntityFrameworkCore.DbLoggerCategory.Model.Validation> logger);"
         },
         {
