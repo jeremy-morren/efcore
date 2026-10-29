@@ -720,11 +720,41 @@ WHERE [o].[Id] = 1
 """);
     }
 
+    public override async Task ExecuteUpdate_complex_property_of_json_owned_reference()
+    {
+        await base.ExecuteUpdate_complex_property_of_json_owned_reference();
+
+        AssertSql();
+    }
+
     public override async Task Json_complex_properties_on_same_owned_type_under_two_navigations_throws()
     {
         await base.Json_complex_properties_on_same_owned_type_under_two_navigations_throws();
 
         AssertSql();
+    }
+
+    public override async Task Update_scalar_and_complex_collection_of_json_owned_reference()
+    {
+        await base.Update_scalar_and_complex_collection_of_json_owned_reference();
+
+        AssertSql(
+            """
+@p0='{"Tag":{"Code":"A","Id":1,"Label":"Uno","RelatedIds":"5,6"},"Tags":[{"Code":"A","Id":10,"Label":"Ten","RelatedIds":""},{"Code":"E","Id":11,"Label":"Eleven","RelatedIds":""}]}' (Nullable = false) (Size = 174)
+@p1='1'
+
+SET IMPLICIT_TRANSACTIONS OFF;
+SET NOCOUNT ON;
+UPDATE [OwnerWithTag] SET [Owned] = @p0
+OUTPUT 1
+WHERE [Id] = @p1;
+""",
+            //
+            """
+SELECT TOP(2) [o].[Id], [o].[Owned]
+FROM [OwnerWithTag] AS [o]
+WHERE [o].[Id] = 1
+""");
     }
 
     public override async Task Optional_owned_reference_with_null_scalars_and_complex_property()

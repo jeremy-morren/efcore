@@ -680,7 +680,11 @@ public class ModificationCommand : IModificationCommand, INonTrackedModification
             }
 
             var modifiedMembers = entry.EntityType.GetFlattenedProperties().Where(entry.IsModified).ToList();
-            if (modifiedMembers.Count == 1)
+
+            // Patch one scalar at a time, except for complex collections and null changes of complex properties
+            if (modifiedMembers.Count == 1
+                && !entry.EntityType.GetFlattenedComplexProperties().Any(cp => cp.IsCollection && entry.IsModified(cp))
+                && !IsInNullableComplexProperty(modifiedMembers[0]))
             {
                 result.Add(
                     new JsonPartialUpdatePathEntry(
@@ -698,6 +702,22 @@ public class ModificationCommand : IModificationCommand, INonTrackedModification
 
             // parent entity got deleted, no need to do any json-specific processing
             return currentEntry?.EntityState == EntityState.Deleted ? null : result;
+
+            static bool IsInNullableComplexProperty(IProperty property)
+            {
+                var type = property.DeclaringType as IComplexType;
+                while (type != null)
+                {
+                    if (type.ComplexProperty.IsNullable)
+                    {
+                        return true;
+                    }
+
+                    type = type.ComplexProperty.DeclaringType as IComplexType;
+                }
+
+                return false;
+            }
         }
 
         static List<JsonPartialUpdatePathEntry> FindCommonJsonPartialUpdateInfo(

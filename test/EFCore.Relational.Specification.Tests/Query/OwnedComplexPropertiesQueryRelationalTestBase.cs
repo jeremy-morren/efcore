@@ -428,6 +428,23 @@ public abstract class OwnedComplexPropertiesQueryRelationalTestBase(NonSharedFix
     }
 
     [Fact]
+    public virtual async Task ExecuteUpdate_complex_property_of_json_owned_reference()
+    {
+        var contextFactory = await InitializeNonSharedTest<Context>(
+            onModelCreating: ConfigureJsonOwnedReference,
+            seed: Seed);
+
+        using var context = contextFactory.CreateDbContext();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => context.Owners.ExecuteUpdateAsync(s => s.SetProperty(e => e.Owned.Address.City, "Melbourne")));
+
+        Assert.Equal(
+            RelationalStrings.ExecuteOperationOnOwnedJsonIsNotSupported("ExecuteUpdate", "Owned"),
+            Assert.IsType<InvalidOperationException>(exception.InnerException).Message);
+    }
+
+    [Fact]
     public virtual async Task Json_complex_properties_on_same_owned_type_under_two_navigations_throws()
     {
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -446,6 +463,30 @@ public abstract class OwnedComplexPropertiesQueryRelationalTestBase(NonSharedFix
         Assert.Equal(
             RelationalStrings.ComplexPropertiesSharedJsonColumn("Owner.Owned#Owned.Address", "SpecialOwner.DerivedOwned#Owned.Address", "Address", "Owners"),
             exception.Message);
+    }
+
+    [Fact]
+    public virtual async Task Update_scalar_and_complex_collection_of_json_owned_reference()
+    {
+        var contextFactory = await InitializeTaggedOwners(ob => ob.ToJson(), configureTag: null, ConfigureTagConverters);
+
+        using (var context = contextFactory.CreateDbContext())
+        {
+            var owner = await context.Set<OwnerWithTag>().SingleAsync(e => e.Id == 1);
+            owner.Owned.Tag.Label = "Uno";
+            owner.Owned.Tags.Add(new Tag { Id = new TagId(11), Label = "Eleven", Code = new TagCode("E") });
+
+            ClearLog();
+            await context.SaveChangesAsync();
+        }
+
+        using (var context = contextFactory.CreateDbContext())
+        {
+            var owner = await context.Set<OwnerWithTag>().SingleAsync(e => e.Id == 1);
+
+            Assert.Equal("Uno", owner.Owned.Tag.Label);
+            Assert.Equal(["Ten", "Eleven"], owner.Owned.Tags.Select(t => t.Label));
+        }
     }
 
     [Fact(Skip = "Issue #35701")]
