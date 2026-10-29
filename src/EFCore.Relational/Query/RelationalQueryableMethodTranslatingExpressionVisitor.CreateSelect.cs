@@ -458,50 +458,63 @@ public partial class RelationalQueryableMethodTranslatingExpressionVisitor
 
             static ITableBase GetTableBaseFiltered(IEntityType entityType, Dictionary<ITableBase, string> existingTables)
                 => entityType.GetQueryMappings().Single(m => !existingTables.ContainsKey(m.Table)).Table;
-
-            static ITableBase FindTable(IComplexProperty complexProperty, IReadOnlyList<ITableMappingBase> mappings)
-                => TryFindTable(complexProperty, mappings)
-                    ?? complexProperty.ComplexType.GetQueryMappings().Single().Table;
-
-            static ITableBase? TryFindTable(IComplexProperty complexProperty, IReadOnlyList<ITableMappingBase> mappings)
-            {
-                if (complexProperty.ComplexType.IsMappedToJson())
-                {
-                    foreach (var mapping in mappings)
-                    {
-                        if (mapping.Table.FindColumn(complexProperty) is { } containerColumn)
-                        {
-                            return containerColumn.Table;
-                        }
-                    }
-
-                    return null;
-                }
-
-                foreach (var property in complexProperty.ComplexType.GetProperties())
-                {
-                    foreach (var mapping in mappings)
-                    {
-                        if (mapping.Table.FindColumn(property) is { } column)
-                        {
-                            return column.Table;
-                        }
-                    }
-                }
-
-                foreach (var nestedComplexProperty in complexProperty.ComplexType.GetComplexProperties())
-                {
-                    var nestedTable = TryFindTable(nestedComplexProperty, mappings);
-                    if (nestedTable is not null)
-                    {
-                        return nestedTable;
-                    }
-                }
-
-                return null;
-            }
         }
     }
+
+    /// <summary>
+    ///     Finds the table a complex property is mapped to among the given table mappings of its containing entity type.
+    /// </summary>
+    /// <param name="complexProperty">The complex property.</param>
+    /// <param name="mappings">The table mappings of the containing entity type.</param>
+    /// <returns>The table the complex property is mapped to.</returns>
+    internal static ITableBase FindTable(IComplexProperty complexProperty, IReadOnlyList<ITableMappingBase> mappings)
+        => TryFindTable(complexProperty, mappings)
+            ?? complexProperty.ComplexType.GetQueryMappings().Single().Table;
+
+    /// <summary>
+    ///     Finds the table that the JSON container column or the columns of a complex property are mapped to.
+    /// </summary>
+    /// <param name="complexProperty">The complex property.</param>
+    /// <param name="mappings">The table mappings of the containing entity type.</param>
+    /// <returns>The table the complex property is mapped to, or <see langword="null" /> if none of the mappings contain it.</returns>
+    private static ITableBase? TryFindTable(IComplexProperty complexProperty, IReadOnlyList<ITableMappingBase> mappings)
+    {
+        if (complexProperty.ComplexType.IsMappedToJson())
+        {
+            foreach (var mapping in mappings)
+            {
+                if (mapping.Table.FindColumn(complexProperty) is { } containerColumn)
+                {
+                    return containerColumn.Table;
+                }
+            }
+
+            return null;
+        }
+
+        foreach (var property in complexProperty.ComplexType.GetProperties())
+        {
+            foreach (var mapping in mappings)
+            {
+                if (mapping.Table.FindColumn(property) is { } column)
+                {
+                    return column.Table;
+                }
+            }
+        }
+
+        foreach (var nestedComplexProperty in complexProperty.ComplexType.GetComplexProperties())
+        {
+            var nestedTable = TryFindTable(nestedComplexProperty, mappings);
+            if (nestedTable is not null)
+            {
+                return nestedTable;
+            }
+        }
+
+        return null;
+    }
+
 
     private SelectExpression GenerateSingleTableSelect(IEntityType entityType, ITableBase table, TableExpressionBase tableExpression)
     {
@@ -560,7 +573,15 @@ public partial class RelationalQueryableMethodTranslatingExpressionVisitor
         return new SelectExpression([tableExpression], projection, identifier, _sqlAliasManager);
     }
 
-    private static Expression ProcessComplexProperty(
+    /// <summary>
+    ///     Creates the shaper for a complex property mapped to columns of the given table, or to a JSON column in it.
+    /// </summary>
+    /// <param name="complexProperty">The complex property.</param>
+    /// <param name="table">The table the complex property is mapped to.</param>
+    /// <param name="tableAlias">The alias of the table in the query.</param>
+    /// <param name="containerNullable">A value indicating whether the containing type can be null.</param>
+    /// <returns>The shaper for the complex property.</returns>
+    internal static Expression ProcessComplexProperty(
         IComplexProperty complexProperty,
         ITableBase table,
         string tableAlias,

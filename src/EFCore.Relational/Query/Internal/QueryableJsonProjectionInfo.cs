@@ -19,7 +19,7 @@ public readonly struct QueryableJsonProjectionInfo
     /// </summary>
     public QueryableJsonProjectionInfo(
         Dictionary<IPropertyBase, int> propertyIndexMap,
-        List<(JsonProjectionInfo, INavigation)> childrenProjectionInfo)
+        List<(JsonProjectionInfo, IPropertyBase)> childrenProjectionInfo)
     {
         PropertyIndexMap = propertyIndexMap;
         ChildrenProjectionInfo = childrenProjectionInfo;
@@ -37,9 +37,9 @@ public readonly struct QueryableJsonProjectionInfo
     public IDictionary<IPropertyBase, int> PropertyIndexMap { get; }
 
     /// <summary>
-    ///     Information needed to construct each child JSON entity.
+    ///     Information needed to construct each child JSON entity or complex type.
     ///     - JsonProjection info (same one we use for simple JSON projection),
-    ///     - navigation between parent and the child JSON entity.
+    ///     - navigation or complex property between parent and the child.
     /// </summary>
     /// <remarks>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -47,5 +47,5 @@ public readonly struct QueryableJsonProjectionInfo
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </remarks>
-    public IList<(JsonProjectionInfo JsonProjectionInfo, INavigation Navigation)> ChildrenProjectionInfo { get; }
+    public IList<(JsonProjectionInfo JsonProjectionInfo, IPropertyBase StructuralProperty)> ChildrenProjectionInfo { get; }
 }
