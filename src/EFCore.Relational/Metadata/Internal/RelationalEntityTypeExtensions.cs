@@ -25,6 +25,33 @@ public static class RelationalEntityTypeExtensions
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
+    public static bool IsOptionalSharingDependent(
+        this IReadOnlyEntityType entityType,
+        in StoreObjectIdentifier storeObject,
+        int recursionDepth = 0)
+    {
+        if (recursionDepth++ == MaxEntityTypesSharingTable)
+        {
+            return true;
+        }
+
+        bool? optional = null;
+        foreach (var linkingForeignKey in entityType.FindRowInternalForeignKeys(storeObject))
+        {
+            optional = (optional ?? true)
+                && (!linkingForeignKey.IsRequiredDependent
+                    || linkingForeignKey.PrincipalEntityType.IsOptionalSharingDependent(storeObject, recursionDepth));
+        }
+
+        return optional ?? (entityType.BaseType != null && entityType.FindDiscriminatorProperty() != null);
+    }
+
+    /// <summary>
+    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
+    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
+    ///     any release. You should only use it directly in your code with extreme caution and knowing that
+    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
+    /// </summary>
     public static IEnumerable<IForeignKey> FindDeclaredReferencingRowInternalForeignKeys(
         this IEntityType entityType,
         StoreObjectIdentifier storeObject)
@@ -92,11 +119,35 @@ public static class RelationalEntityTypeExtensions
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public static List<IProperty> GetNonPrincipalSharedNonPkProperties(this IEntityType entityType, ITableBase table)
+    public static bool IsNullable(this IPropertyBase property)
+        => property switch
+        {
+            IProperty p => p.IsNullable,
+            IComplexProperty complexProperty => complexProperty.IsNullable,
+            _ => true
+        };
+
+    /// <summary>
+    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
+    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
+    ///     any release. You should only use it directly in your code with extreme caution and knowing that
+    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
+    /// </summary>
+    public static List<IPropertyBase> GetRequiredNonPkProperties(this IEntityType entityType)
+        => [.. entityType.GetProperties().Where(p => !p.IsNullable && !p.IsPrimaryKey()),
+            .. entityType.GetJsonComplexProperties().Where(p => !p.IsNullable)];
+
+    /// <summary>
+    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
+    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
+    ///     any release. You should only use it directly in your code with extreme caution and knowing that
+    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
+    /// </summary>
+    public static List<IPropertyBase> GetNonPrincipalSharedNonPkProperties(this IEntityType entityType, ITableBase table)
     {
         var principalEntityTypes = new HashSet<IEntityType>();
         PopulatePrincipalEntityTypes(table, entityType, principalEntityTypes);
-        var properties = new List<IProperty>();
+        var properties = new List<IPropertyBase>();
         foreach (var property in entityType.GetProperties())
         {
             if (property.IsPrimaryKey())
@@ -120,6 +171,10 @@ public static class RelationalEntityTypeExtensions
             properties.Add(property);
         }
 
+        // A JSON column can't be shared with a principal, as they share a row
+        properties.AddRange(entityType.GetJsonComplexProperties().Where(p => p.ComplexType.GetContainerColumnName() is { } columnName
+            && table.FindColumn(columnName) != null));
+
         return properties;
 
         static void PopulatePrincipalEntityTypes(ITableBase table, IEntityType entityType, HashSet<IEntityType> entityTypes)
@@ -131,4 +186,14 @@ public static class RelationalEntityTypeExtensions
             }
         }
     }
+
+    // The JSON column of a complex property is null exactly when the property is null, so it can identify an optional dependent
+    /// <summary>
+    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
+    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
+    ///     any release. You should only use it directly in your code with extreme caution and knowing that
+    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
+    /// </summary>
+    public static IEnumerable<IComplexProperty> GetJsonComplexProperties(this IEntityType entityType)
+        => entityType.GetComplexProperties().Where(p => p.ComplexType.IsMappedToJson());
 }
