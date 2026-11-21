@@ -51,6 +51,19 @@ WHERE (c["RequiredAssociate"]["RequiredNestedAssociate"]["Int"] = 8)
     private void AssertSql(params string[] expected)
         => Fixture.TestSqlLoggerFactory.AssertBaseline(expected);
 
+    #region GroupBy element
+
+    public override Task Where_on_root_property_on_GroupBy_First()
+        => AssertTranslationFailed(base.Where_on_root_property_on_GroupBy_First);
+
+    public override Task Where_on_associate_scalar_property_on_GroupBy_First()
+        => AssertTranslationFailed(base.Where_on_associate_scalar_property_on_GroupBy_First);
+
+    public override Task OrderBy_associate_scalar_property_on_GroupBy_First()
+        => AssertTranslationFailed(base.OrderBy_associate_scalar_property_on_GroupBy_First);
+
+    #endregion GroupBy element
+
     [Fact]
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
