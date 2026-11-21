@@ -532,14 +532,25 @@ public sealed partial class SelectExpression : TableExpressionBase
 
                 foreach (var complexProperty in GetAllComplexPropertiesInHierarchy(projection.StructuralType))
                 {
-                    if (complexProperty.IsCollection)
+                    switch (projection.BindComplexProperty(complexProperty))
                     {
-                        throw new NotImplementedException(); // #36296
+                        // Table splitting
+                        case StructuralTypeShaperExpression { ValueBufferExpression: StructuralTypeProjectionExpression nestedProjection }:
+                            ProcessTypeProjection(nestedProjection);
+                            break;
+
+                        // JSON, single or collection: project the JSON column
+                        case StructuralTypeShaperExpression { ValueBufferExpression: JsonQueryExpression jsonQuery }:
+                            AddToProjection(jsonQuery.JsonColumn, alias: null);
+                            break;
+
+                        case CollectionResultExpression { QueryExpression: JsonQueryExpression jsonCollectionQuery }:
+                            AddToProjection(jsonCollectionQuery.JsonColumn, alias: null);
+                            break;
+
+                        default:
+                            throw new UnreachableException("Unexpected complex property binding when applying projection.");
                     }
-
-                    var propertyShaper = (StructuralTypeShaperExpression)projection.BindComplexProperty(complexProperty);
-
-                    ProcessTypeProjection((StructuralTypeProjectionExpression)propertyShaper.ValueBufferExpression);
                 }
             }
 

@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using Microsoft.EntityFrameworkCore.Query.Associations.ComplexProperties;
+using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 
 namespace Microsoft.EntityFrameworkCore.Query.Associations.ComplexJson;
 
@@ -73,6 +74,24 @@ public abstract class ComplexJsonMiscellaneousRelationalTestBase<TFixture> : Com
                   select r.Id);
 
     #endregion Left join
+
+    [Fact]
+    public virtual void ApplyProjection_projects_JSON_complex_properties()
+    {
+        using var context = Fixture.CreateContext();
+        var queryCompilationContext = context.GetService<IQueryCompilationContextFactory>().Create(async: false);
+        var shapedQuery = Assert.IsType<ShapedQueryExpression>(
+            context.GetService<IQueryableMethodTranslatingExpressionVisitorFactory>()
+                .Create(queryCompilationContext)
+                .Translate(context.Set<RootEntity>().AsQueryable().Expression));
+        var selectExpression = (SelectExpression)shapedQuery.QueryExpression;
+
+        selectExpression.ApplyProjection();
+
+        Assert.Equal(
+            ["Id", "Name", "AssociateCollection", "OptionalAssociate", "RequiredAssociate"],
+            selectExpression.Projection.Select(p => p.Alias));
+    }
 
     protected void AssertSql(params string[] expected)
         => Fixture.TestSqlLoggerFactory.AssertBaseline(expected);

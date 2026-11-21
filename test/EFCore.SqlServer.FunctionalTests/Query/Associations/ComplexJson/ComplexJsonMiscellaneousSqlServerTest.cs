@@ -281,6 +281,9 @@ WHERE CAST(JSON_VALUE([r1].[c1], '$.Int') AS int) <> 8 OR CAST(JSON_VALUE([r1].[
 
     #endregion Left join
 
+    public override void ApplyProjection_projects_JSON_complex_properties()
+        => base.ApplyProjection_projects_JSON_complex_properties();
+
     [Fact]
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
