@@ -392,6 +392,12 @@ FROM root c
     public override Task Select_subquery_optional_related_FirstOrDefault(QueryTrackingBehavior queryTrackingBehavior)
         => AssertTranslationFailed(() => base.Select_subquery_optional_related_FirstOrDefault(queryTrackingBehavior));
 
+    public override Task Select_associate_on_GroupBy_First(QueryTrackingBehavior queryTrackingBehavior)
+        => AssertTranslationFailed(() => base.Select_associate_on_GroupBy_First(queryTrackingBehavior));
+
+    public override Task Select_nested_associate_scalar_property_on_GroupBy_First(QueryTrackingBehavior queryTrackingBehavior)
+        => AssertTranslationFailed(() => base.Select_nested_associate_scalar_property_on_GroupBy_First(queryTrackingBehavior));
+
     #endregion Subquery
 
     #region Value types
