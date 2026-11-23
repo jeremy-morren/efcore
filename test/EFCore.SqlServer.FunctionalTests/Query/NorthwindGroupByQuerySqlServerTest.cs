@@ -4068,6 +4068,271 @@ ORDER BY COUNT(*) DESC, [c].[City]
     {
         await base.GroupBy_let_orderby_projection_with_coalesce_operation(async);
 
+        AssertSql(
+            """
+SELECT COALESCE([c].[City], N'Unknown') AS [Locality], COUNT(*) AS [Count]
+FROM [Customers] AS [c]
+GROUP BY [c].[City]
+ORDER BY COUNT(*) DESC, [c].[City]
+""");
+    }
+
+    public override async Task GroupBy_let_aggregate_where_orderby(bool async)
+    {
+        await base.GroupBy_let_aggregate_where_orderby(async);
+
+        AssertSql(
+            """
+SELECT [o].[CustomerID] AS [Key], ISNULL(SUM([o].[OrderID]), 0) AS [Total]
+FROM [Orders] AS [o]
+GROUP BY [o].[CustomerID]
+HAVING ISNULL(SUM([o].[OrderID]), 0) > 100000
+ORDER BY [o].[CustomerID] DESC
+""");
+    }
+
+    public override async Task GroupBy_let_aggregate_orderby(bool async)
+    {
+        await base.GroupBy_let_aggregate_orderby(async);
+
+        AssertSql(
+            """
+SELECT [o].[CustomerID] AS [Key], COUNT(*) AS [Count]
+FROM [Orders] AS [o]
+GROUP BY [o].[CustomerID]
+ORDER BY COUNT(*) DESC, [o].[CustomerID]
+""");
+    }
+
+    public override async Task GroupBy_multiple_let_aggregates(bool async)
+    {
+        await base.GroupBy_multiple_let_aggregates(async);
+
+        AssertSql(
+            """
+SELECT [o].[CustomerID] AS [Key], COUNT(*) AS [Count], MAX([o].[OrderID]) AS [Max]
+FROM [Orders] AS [o]
+GROUP BY [o].[CustomerID]
+HAVING COUNT(*) > 10
+""");
+    }
+
+    public override async Task GroupBy_let_OrderByDescending_First(bool async)
+    {
+        await base.GroupBy_let_OrderByDescending_First(async);
+
+        AssertSql(
+            """
+SELECT [o].[CustomerID] AS [Key], (
+    SELECT TOP(1) [o0].[OrderID]
+    FROM [Orders] AS [o0]
+    WHERE [o].[CustomerID] = [o0].[CustomerID] OR ([o].[CustomerID] IS NULL AND [o0].[CustomerID] IS NULL)
+    ORDER BY [o0].[OrderID] DESC) AS [OrderID], (
+    SELECT TOP(1) [o1].[OrderDate]
+    FROM [Orders] AS [o1]
+    WHERE [o].[CustomerID] = [o1].[CustomerID] OR ([o].[CustomerID] IS NULL AND [o1].[CustomerID] IS NULL)
+    ORDER BY [o1].[OrderID] DESC) AS [OrderDate]
+FROM [Orders] AS [o]
+GROUP BY [o].[CustomerID]
+""");
+    }
+
+    public override async Task GroupBy_let_OrderByDescending_First_where_orderby(bool async)
+    {
+        await base.GroupBy_let_OrderByDescending_First_where_orderby(async);
+
+        AssertSql(
+            """
+SELECT [o].[CustomerID] AS [Key], (
+    SELECT TOP(1) [o2].[OrderID]
+    FROM [Orders] AS [o2]
+    WHERE [o].[CustomerID] = [o2].[CustomerID] OR ([o].[CustomerID] IS NULL AND [o2].[CustomerID] IS NULL)
+    ORDER BY [o2].[OrderID] DESC) AS [OrderID]
+FROM [Orders] AS [o]
+GROUP BY [o].[CustomerID]
+HAVING (
+    SELECT TOP(1) [o0].[OrderDate]
+    FROM [Orders] AS [o0]
+    WHERE [o].[CustomerID] = [o0].[CustomerID] OR ([o].[CustomerID] IS NULL AND [o0].[CustomerID] IS NULL)
+    ORDER BY [o0].[OrderID] DESC) > '1998-04-01T00:00:00.000'
+ORDER BY (
+    SELECT TOP(1) [o1].[OrderID]
+    FROM [Orders] AS [o1]
+    WHERE [o].[CustomerID] = [o1].[CustomerID] OR ([o].[CustomerID] IS NULL AND [o1].[CustomerID] IS NULL)
+    ORDER BY [o1].[OrderID] DESC)
+""");
+    }
+
+    public override async Task GroupBy_let_orderby_Skip_Take(bool async)
+    {
+        await base.GroupBy_let_orderby_Skip_Take(async);
+
+        AssertSql(
+            """
+@p='2'
+@p1='5'
+
+SELECT [o].[CustomerID] AS [Key], COUNT(*) AS [Count]
+FROM [Orders] AS [o]
+GROUP BY [o].[CustomerID]
+ORDER BY COUNT(*) DESC, [o].[CustomerID]
+OFFSET @p ROWS FETCH NEXT @p1 ROWS ONLY
+""");
+    }
+
+    public override async Task GroupBy_let_where_Count(bool async)
+    {
+        await base.GroupBy_let_where_Count(async);
+
+        AssertSql(
+            """
+SELECT COUNT(*)
+FROM (
+    SELECT 1 AS empty
+    FROM [Orders] AS [o]
+    GROUP BY [o].[CustomerID]
+    HAVING COUNT(*) > 10
+) AS [o0]
+""");
+    }
+
+    public override async Task GroupBy_let_LongCount_with_predicate(bool async)
+    {
+        await base.GroupBy_let_LongCount_with_predicate(async);
+
+        AssertSql(
+            """
+SELECT COUNT_BIG(*)
+FROM (
+    SELECT 1 AS empty
+    FROM [Orders] AS [o]
+    GROUP BY [o].[CustomerID]
+    HAVING COUNT(*) > 10
+) AS [o0]
+""");
+    }
+
+    public override async Task GroupBy_let_where_Any(bool async)
+    {
+        await base.GroupBy_let_where_Any(async);
+
+        AssertSql(
+            """
+SELECT CASE
+    WHEN EXISTS (
+        SELECT 1
+        FROM [Orders] AS [o]
+        GROUP BY [o].[CustomerID]
+        HAVING COUNT(*) > 30) THEN CAST(1 AS bit)
+    ELSE CAST(0 AS bit)
+END
+""");
+    }
+
+    public override async Task GroupBy_let_All(bool async)
+    {
+        await base.GroupBy_let_All(async);
+
+        AssertSql(
+            """
+SELECT CASE
+    WHEN NOT EXISTS (
+        SELECT 1
+        FROM [Orders] AS [o]
+        GROUP BY [o].[CustomerID]
+        HAVING COUNT(*) <= 0 OR [o].[CustomerID] IS NULL) THEN CAST(1 AS bit)
+    ELSE CAST(0 AS bit)
+END
+""");
+    }
+
+    public override async Task GroupBy_let_orderby_implicitly_widened_key(bool async)
+    {
+        await base.GroupBy_let_orderby_implicitly_widened_key(async);
+
+        AssertSql(
+            """
+SELECT [o].[CustomerID]
+FROM [Orders] AS [o]
+GROUP BY [o].[CustomerID]
+ORDER BY [o].[CustomerID]
+""");
+    }
+
+    public override async Task GroupBy_let_Any_with_predicate(bool async)
+    {
+        await base.GroupBy_let_Any_with_predicate(async);
+
+        AssertSql(
+            """
+SELECT CASE
+    WHEN EXISTS (
+        SELECT 1
+        FROM [Orders] AS [o]
+        GROUP BY [o].[CustomerID]
+        HAVING COUNT(*) > 30) THEN CAST(1 AS bit)
+    ELSE CAST(0 AS bit)
+END
+""");
+    }
+
+    public override async Task GroupBy_let_Count_with_predicate(bool async)
+    {
+        await base.GroupBy_let_Count_with_predicate(async);
+
+        AssertSql(
+            """
+SELECT COUNT(*)
+FROM (
+    SELECT 1 AS empty
+    FROM [Orders] AS [o]
+    GROUP BY [o].[CustomerID]
+    HAVING COUNT(*) > 10
+) AS [o0]
+""");
+    }
+
+    public override async Task GroupBy_let_where_LongCount(bool async)
+    {
+        await base.GroupBy_let_where_LongCount(async);
+
+        AssertSql(
+            """
+SELECT COUNT_BIG(*)
+FROM (
+    SELECT 1 AS empty
+    FROM [Orders] AS [o]
+    GROUP BY [o].[CustomerID]
+    HAVING COUNT(*) > 10
+) AS [o0]
+""");
+    }
+
+    public override async Task GroupBy_dependent_lets(bool async)
+    {
+        await base.GroupBy_dependent_lets(async);
+
+        AssertSql(
+            """
+SELECT [o].[CustomerID] AS [Key], COUNT(*) AS [Count], ISNULL(SUM([o].[OrderID]), 0) / COUNT(*) AS [Average]
+FROM [Orders] AS [o]
+GROUP BY [o].[CustomerID]
+HAVING COUNT(*) > 5
+ORDER BY ISNULL(SUM([o].[OrderID]), 0) / COUNT(*) DESC, [o].[CustomerID]
+""");
+    }
+
+    public override async Task GroupBy_let_Distinct_is_not_translated(bool async)
+    {
+        await base.GroupBy_let_Distinct_is_not_translated(async);
+
+        AssertSql();
+    }
+
+    public override async Task GroupBy_let_grouping_projected_is_not_translated(bool async)
+    {
+        await base.GroupBy_let_grouping_projected_is_not_translated(async);
+
         AssertSql();
     }
 

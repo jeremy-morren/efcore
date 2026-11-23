@@ -463,14 +463,34 @@ GROUP BY [a].[Id], [a].[Alias], [a].[FirstName], [a].[LastName]
     {
         await base.Min_Elements_from_LINQ_101(async);
 
-        AssertSql();
+        AssertSql(
+            """
+SELECT [p1].[Category], [p0].[Id], [p0].[Category], [p0].[Discriminator], [p0].[ProductName], [p0].[UnitPrice], [p0].[UnitsInStock]
+FROM (
+    SELECT [p].[Category], MIN([p].[UnitPrice]) AS [c]
+    FROM [ProductForLinq] AS [p]
+    GROUP BY [p].[Category]
+) AS [p1]
+LEFT JOIN [ProductForLinq] AS [p0] ON ([p1].[Category] = [p0].[Category] OR ([p1].[Category] IS NULL AND [p0].[Category] IS NULL)) AND [p1].[c] = [p0].[UnitPrice]
+ORDER BY [p1].[Category]
+""");
     }
 
     public override async Task Max_Elements_from_LINQ_101(bool async)
     {
         await base.Max_Elements_from_LINQ_101(async);
 
-        AssertSql();
+        AssertSql(
+            """
+SELECT [p1].[Category], [p0].[Id], [p0].[Category], [p0].[Discriminator], [p0].[ProductName], [p0].[UnitPrice], [p0].[UnitsInStock]
+FROM (
+    SELECT [p].[Category], MAX([p].[UnitPrice]) AS [c]
+    FROM [ProductForLinq] AS [p]
+    GROUP BY [p].[Category]
+) AS [p1]
+LEFT JOIN [ProductForLinq] AS [p0] ON ([p1].[Category] = [p0].[Category] OR ([p1].[Category] IS NULL AND [p0].[Category] IS NULL)) AND [p1].[c] = [p0].[UnitPrice]
+ORDER BY [p1].[Category]
+""");
     }
 
     public override async Task Group_Join_from_LINQ_101(bool async)

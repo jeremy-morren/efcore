@@ -431,6 +431,23 @@ var blogs = await context.Blogs.GroupBy(b => b.Name)
 var blogs = await context.Blogs.GroupBy(b => b.Name).Where(g => new List<int> { g.Count(), -1 }.Contains(1)).Select(g => g.Key).ToListAsync();
 """);
 
+    [Fact]
+    public virtual Task GroupBy_let_where_with_captured_variable()
+        => Test(
+            """
+var threshold = 2;
+var groups = await context.Posts
+    .GroupBy(p => p.Id / 10)
+    .Select(g => new { Group = g, count = g.Count() })
+    .Where(x => x.count > threshold)
+    .Select(x => new { x.Group.Key, Count = x.count })
+    .ToListAsync();
+
+var group = Assert.Single(groups);
+Assert.Equal(2, group.Key);
+Assert.Equal(3, group.Count);
+""");
+
     #endregion Regular operators
 
     #region Terminating operators

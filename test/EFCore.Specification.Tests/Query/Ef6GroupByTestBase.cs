@@ -311,14 +311,19 @@ public abstract class Ef6GroupByTestBase<TFixture>(TFixture fixture) : QueryTest
 
     [Theory, MemberData(nameof(IsAsyncData))]
     public virtual Task Min_Elements_from_LINQ_101(bool async)
-        // Navigation expansion phase 2. Issue #23206.
-        => AssertTranslationFailed(() => AssertQuery(
+        => AssertQuery(
             async,
             ss => from p in ss.Set<ProductForLinq>()
                   group p by p.Category
                   into g
                   let minPrice = g.Min(decimal (p) => p.UnitPrice)
-                  select new { Category = g.Key, CheapestProducts = g.Where(p => p.UnitPrice == minPrice) }));
+                  select new { Category = g.Key, CheapestProducts = g.Where(p => p.UnitPrice == minPrice) },
+            elementSorter: e => e.Category,
+            elementAsserter: (e, a) =>
+            {
+                Assert.Equal(e.Category, a.Category);
+                AssertCollection(e.CheapestProducts, a.CheapestProducts, elementSorter: p => p.ProductName, elementAsserter: (ep, ap) => Assert.Equal(ep.ProductName, ap.ProductName));
+            });
 
     [Theory, MemberData(nameof(IsAsyncData))]
     public virtual Task Max_Grouped_from_LINQ_101(bool async)
@@ -331,14 +336,19 @@ public abstract class Ef6GroupByTestBase<TFixture>(TFixture fixture) : QueryTest
 
     [Theory, MemberData(nameof(IsAsyncData))]
     public virtual Task Max_Elements_from_LINQ_101(bool async)
-        // Navigation expansion phase 2. Issue #23206.
-        => AssertTranslationFailed(() => AssertQuery(
+        => AssertQuery(
             async,
             ss => from p in ss.Set<ProductForLinq>()
                   group p by p.Category
                   into g
                   let minPrice = g.Max(decimal (p) => p.UnitPrice)
-                  select new { Category = g.Key, MostExpensiveProducts = g.Where(p => p.UnitPrice == minPrice) }));
+                  select new { Category = g.Key, MostExpensiveProducts = g.Where(p => p.UnitPrice == minPrice) },
+            elementSorter: e => e.Category,
+            elementAsserter: (e, a) =>
+            {
+                Assert.Equal(e.Category, a.Category);
+                AssertCollection(e.MostExpensiveProducts, a.MostExpensiveProducts, elementSorter: p => p.ProductName, elementAsserter: (ep, ap) => Assert.Equal(ep.ProductName, ap.ProductName));
+            });
 
     [Theory, MemberData(nameof(IsAsyncData))]
     public virtual Task Average_Grouped_from_LINQ_101(bool async)

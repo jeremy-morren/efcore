@@ -2412,16 +2412,224 @@ public abstract class NorthwindGroupByQueryTestBase<TFixture>(TFixture fixture) 
 
     [Theory, MemberData(nameof(IsAsyncData))]
     public virtual Task GroupBy_let_orderby_projection_with_coalesce_operation(bool async)
-        // Select with grouping. Issue #18923.
+        // Issue #18923.
+        => AssertQuery(
+            async,
+            ss => ss.Set<Customer>()
+                .GroupBy(c => c.City)
+                .Select(g => new { citiesCount = g.Count(), g })
+                .OrderByDescending(x => x.citiesCount)
+                .ThenBy(x => x.g.Key)
+                .Select(x => new { Locality = x.g.Key ?? "Unknown", Count = x.citiesCount }),
+            elementSorter: e => e.Locality);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_aggregate_where_orderby(bool async)
+        // Issue #17673.
+        => AssertQuery(
+            async,
+            ss => from o in ss.Set<Order>()
+                  group o by o.CustomerID
+                  into g
+                  orderby g.Key descending
+                  let total = g.Sum(o => o.OrderID)
+                  where total > 100000
+                  select new { g.Key, Total = total },
+            assertOrder: true);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_aggregate_orderby(bool async)
+        // Issue #17673.
+        => AssertQuery(
+            async,
+            ss => from o in ss.Set<Order>()
+                  group o by o.CustomerID
+                  into g
+                  let count = g.Count()
+                  orderby count descending, g.Key
+                  select new { g.Key, Count = count },
+            assertOrder: true);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_multiple_let_aggregates(bool async)
+        // Issue #17673.
+        => AssertQuery(
+            async,
+            ss => from o in ss.Set<Order>()
+                  group o by o.CustomerID
+                  into g
+                  let count = g.Count()
+                  let max = g.Max(o => o.OrderID)
+                  where count > 10
+                  select new { g.Key, Count = count, Max = max },
+            elementSorter: e => e.Key);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_OrderByDescending_First(bool async)
+        // Issue #17673.
+        => AssertQuery(
+            async,
+            ss => from o in ss.Set<Order>()
+                  group o by o.CustomerID
+                  into g
+                  let last = g.OrderByDescending(o => o.OrderID).First()
+                  select new { g.Key, last.OrderID, last.OrderDate },
+            elementSorter: e => e.Key);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_OrderByDescending_First_where_orderby(bool async)
+        // Issue #17673.
+        => AssertQuery(
+            async,
+            ss => from o in ss.Set<Order>()
+                  group o by o.CustomerID
+                  into g
+                  let last = g.OrderByDescending(o => o.OrderID).First()
+                  where last.OrderDate > new DateTime(1998, 4, 1)
+                  orderby last.OrderID
+                  select new { g.Key, last.OrderID },
+            assertOrder: true);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_orderby_Skip_Take(bool async)
+        // Issue #17673.
+        => AssertQuery(
+            async,
+            ss => ss.Set<Order>()
+                .GroupBy(o => o.CustomerID)
+                .Select(g => new { g, count = g.Count() })
+                .OrderByDescending(x => x.count)
+                .ThenBy(x => x.g.Key)
+                .Skip(2)
+                .Take(5)
+                .Select(x => new { x.g.Key, Count = x.count }),
+            assertOrder: true);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_where_Count(bool async)
+        // Issue #17673.
+        => AssertCount(
+            async,
+            ss => ss.Set<Order>()
+                .GroupBy(o => o.CustomerID)
+                .Select(g => new { g, count = g.Count() })
+                .Where(x => x.count > 10));
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_LongCount_with_predicate(bool async)
+        // Issue #17673.
+        => AssertLongCount(
+            async,
+            ss => ss.Set<Order>()
+                .GroupBy(o => o.CustomerID)
+                .Select(g => new { g, count = g.Count() }),
+            x => x.count > 10);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_where_Any(bool async)
+        // Issue #17673.
+        => AssertAny(
+            async,
+            ss => ss.Set<Order>()
+                .GroupBy(o => o.CustomerID)
+                .Select(g => new { g, count = g.Count() })
+                .Where(x => x.count > 30));
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_All(bool async)
+        // Issue #17673.
+        => AssertAll(
+            async,
+            ss => ss.Set<Order>()
+                .GroupBy(o => o.CustomerID)
+                .Select(g => new { g, count = g.Count() }),
+            x => x.count > 0 && x.g.Key != null);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_orderby_implicitly_widened_key(bool async)
+        => AssertQuery(
+            async,
+            ss => OrderByObject(
+                    ss.Set<Order>()
+                        .GroupBy(o => o.CustomerID)
+                        .Select(g => new { g, Key = g.Key }),
+                    x => x.Key)
+                .Select(x => x.Key),
+            assertOrder: true);
+
+    private static IOrderedQueryable<T> OrderByObject<T>(
+        IQueryable<T> source,
+        Expression<Func<T, object?>> keySelector)
+        => source.OrderBy(keySelector);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_Any_with_predicate(bool async)
+        // Issue #17673.
+        => AssertAny(
+            async,
+            ss => ss.Set<Order>()
+                .GroupBy(o => o.CustomerID)
+                .Select(g => new { g, count = g.Count() }),
+            x => x.count > 30);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_Count_with_predicate(bool async)
+        // Issue #17673.
+        => AssertCount(
+            async,
+            ss => ss.Set<Order>()
+                .GroupBy(o => o.CustomerID)
+                .Select(g => new { g, count = g.Count() }),
+            x => x.count > 10);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_where_LongCount(bool async)
+        // Issue #17673.
+        => AssertLongCount(
+            async,
+            ss => ss.Set<Order>()
+                .GroupBy(o => o.CustomerID)
+                .Select(g => new { g, count = g.Count() })
+                .Where(x => x.count > 10));
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_dependent_lets(bool async)
+        // Issue #17673.
+        => AssertQuery(
+            async,
+            ss => from o in ss.Set<Order>()
+                  group o by o.CustomerID
+                  into g
+                  let count = g.Count()
+                  where count > 5
+                  let average = g.Sum(o => o.OrderID) / count
+                  orderby average descending, g.Key
+                  select new { g.Key, Count = count, Average = average },
+            assertOrder: true);
+
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_Distinct_is_not_translated(bool async)
+        // Only Where, OrderBy/ThenBy, Skip and Take can follow a projection which contains the grouping itself.
         => AssertTranslationFailedWithDetails(
             () => AssertQuery(
                 async,
-                ss => ss.Set<Customer>()
-                    .GroupBy(c => c.City)
-                    .Select(g => new { citiesCount = g.Count(), g })
-                    .OrderByDescending(x => x.citiesCount)
-                    .ThenBy(x => x.g.Key)
-                    .Select(x => new { Locality = x.g.Key ?? "Unknown", Count = x.citiesCount })),
+                ss => ss.Set<Order>()
+                    .GroupBy(o => o.CustomerID)
+                    .Select(g => new { g, count = g.Count() })
+                    .Distinct()
+                    .Select(x => new { x.g.Key, Count = x.count })),
+            CoreStrings.QuerySelectContainsGrouping);
+    [Theory, MemberData(nameof(IsAsyncData))]
+    public virtual Task GroupBy_let_grouping_projected_is_not_translated(bool async)
+        // The grouping itself can't be projected, also when it's carried by a 'let'.
+        => AssertTranslationFailedWithDetails(
+            () => AssertQuery(
+                async,
+                ss => from o in ss.Set<Order>()
+                      group o by o.CustomerID
+                      into g
+                      let count = g.Count()
+                      select new { Count = count, Grouping = g }),
             CoreStrings.QuerySelectContainsGrouping);
 
     [Theory, MemberData(nameof(IsAsyncData))]

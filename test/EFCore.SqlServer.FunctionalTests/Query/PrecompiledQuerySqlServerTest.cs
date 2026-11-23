@@ -740,6 +740,24 @@ HAVING 1 IN (COUNT(*), -1)
 """);
     }
 
+    public override async Task GroupBy_let_where_with_captured_variable()
+    {
+        await base.GroupBy_let_where_with_captured_variable();
+
+        AssertSql(
+            """
+@threshold='2'
+
+SELECT [p0].[Key], COUNT(*) AS [Count]
+FROM (
+    SELECT [p].[Id] / 10 AS [Key]
+    FROM [Posts] AS [p]
+) AS [p0]
+GROUP BY [p0].[Key]
+HAVING COUNT(*) > @threshold
+""");
+    }
+
     #endregion Regular operators
 
     #region Terminating operators

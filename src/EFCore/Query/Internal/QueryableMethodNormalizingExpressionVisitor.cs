@@ -258,6 +258,7 @@ public class QueryableMethodNormalizingExpressionVisitor : ExpressionVisitor
             visitedMethodCall = TryNormalizeMaxByMinBy(visitedMethodCall);
             visitedMethodCall = TryNormalizeJoinWithoutResultSelector(visitedMethodCall);
             visitedMethodCall = TryNormalizeAppendPrepend(visitedMethodCall);
+            visitedMethodCall = TryInlineGroupingTransparentIdentifier(visitedMethodCall);
 
             return visitedMethodCall;
         }
@@ -856,6 +857,146 @@ public class QueryableMethodNormalizingExpressionVisitor : ExpressionVisitor
         }
 
         return methodCallExpression;
+    }
+
+    private static MethodCallExpression TryInlineGroupingTransparentIdentifier(MethodCallExpression methodCallExpression)
+    {
+        /*
+            A 'let' clause after 'group ... into g' projects the grouping itself into a transparent identifier, which can't be translated:
+
+            GroupBy(...).Select(g => new { g, x = g.Sum(...) }).Where(t => t.x > 0).OrderBy(t => t.g.Key).Select(t => new { t.g.Key, t.x })
+
+            Inline the transparent identifier into the operators which follow it, up to the operator which ends them
+            (a Select, or Any/All/Count/LongCount):
+
+            GroupBy(...).Where(g => g.Sum(...) > 0).OrderBy(g => g.Key).Select(g => new { g.Key, x = g.Sum(...) })
+        */
+
+        // This runs for every Queryable call, and most queries don't contain such a transparent identifier: match on the
+        // method names first, and check the exact overloads (GetGenericMethodDefinition allocates) only once the
+        // transparent identifier has been found.
+        if (!IsQueryableMethod(
+                methodCallExpression,
+                nameof(Queryable.Select), nameof(Queryable.Any), nameof(Queryable.All), nameof(Queryable.Count),
+                nameof(Queryable.LongCount)))
+        {
+            return methodCallExpression;
+        }
+
+        // Find the source of the operators which follow the transparent identifier.
+        var source = methodCallExpression.Arguments[0];
+        while (source is MethodCallExpression operatorCall
+               && IsQueryableMethod(
+                   operatorCall,
+                   nameof(Queryable.Where), nameof(Queryable.OrderBy), nameof(Queryable.OrderByDescending), nameof(Queryable.ThenBy),
+                   nameof(Queryable.ThenByDescending), nameof(Queryable.Skip), nameof(Queryable.Take)))
+        {
+            source = operatorCall.Arguments[0];
+        }
+
+        if (source is not MethodCallExpression transparentIdentifierSelect
+            || !IsQueryableMethod(transparentIdentifierSelect, nameof(Queryable.Select))
+            || transparentIdentifierSelect.Arguments[1].UnwrapLambdaFromQuote() is not
+            {
+                Parameters: [{ Type.IsGenericType: true } groupingParameter],
+                Body: NewExpression { Members: not null } transparentIdentifier
+            }
+            || groupingParameter.Type.GetGenericTypeDefinition() != typeof(IGrouping<,>)
+            || !ContainsGrouping(transparentIdentifier, groupingParameter)
+            || !AreSupportedOverloads())
+        {
+            return methodCallExpression;
+        }
+
+        return Inline(methodCallExpression);
+
+        static bool IsQueryableMethod(MethodCallExpression methodCall, params ReadOnlySpan<string> names)
+            => methodCall.Method is { IsGenericMethod: true } method
+                && method.DeclaringType == typeof(Queryable)
+                && names.Contains(method.Name);
+
+        // Excludes the overloads which match by name only (e.g. the index-based Select and Where, Take with a Range).
+        bool AreSupportedOverloads()
+        {
+            var genericMethod = methodCallExpression.Method.GetGenericMethodDefinition();
+            if (genericMethod != QueryableMethods.Select
+                && genericMethod != QueryableMethods.AnyWithoutPredicate
+                && genericMethod != QueryableMethods.AnyWithPredicate
+                && genericMethod != QueryableMethods.All
+                && genericMethod != QueryableMethods.CountWithoutPredicate
+                && genericMethod != QueryableMethods.CountWithPredicate
+                && genericMethod != QueryableMethods.LongCountWithoutPredicate
+                && genericMethod != QueryableMethods.LongCountWithPredicate)
+            {
+                return false;
+            }
+
+            for (var current = (MethodCallExpression)methodCallExpression.Arguments[0];
+                 current != transparentIdentifierSelect;
+                 current = (MethodCallExpression)current.Arguments[0])
+            {
+                var operatorMethod = current.Method.GetGenericMethodDefinition();
+                if (operatorMethod != QueryableMethods.Where
+                    && operatorMethod != QueryableMethods.OrderBy
+                    && operatorMethod != QueryableMethods.OrderByDescending
+                    && operatorMethod != QueryableMethods.ThenBy
+                    && operatorMethod != QueryableMethods.ThenByDescending
+                    && operatorMethod != QueryableMethods.Skip
+                    && operatorMethod != QueryableMethods.Take)
+                {
+                    return false;
+                }
+            }
+
+            return transparentIdentifierSelect.Method.GetGenericMethodDefinition() == QueryableMethods.Select;
+        }
+
+        // Applies the operator (and the operators before it, up to the transparent identifier) to the groupings instead of
+        // the transparent identifiers. Replacing the parameter of a lambda with the transparent identifier reduces the accesses
+        // to its members.
+        MethodCallExpression Inline(MethodCallExpression operatorCall)
+        {
+            var genericArguments = operatorCall.Method.GetGenericArguments();
+            genericArguments[0] = groupingParameter.Type;
+
+            var arguments = operatorCall.Arguments.ToArray();
+            arguments[0] = arguments[0] == transparentIdentifierSelect
+                ? transparentIdentifierSelect.Arguments[0]
+                : Inline((MethodCallExpression)arguments[0]);
+
+            for (var i = 1; i < arguments.Length; i++)
+            {
+                if (arguments[i] is UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression lambda })
+                {
+                    // Keep the declared return type of the lambda, which may differ from the type of its body
+                    // (e.g. a string key for an Expression<Func<T, object>>).
+                    arguments[i] = Expression.Quote(
+                        Expression.Lambda(
+                            Expression.GetFuncType(groupingParameter.Type, lambda.ReturnType),
+                            ReplacingExpressionVisitor.Replace(lambda.Parameters[0], transparentIdentifier, lambda.Body),
+                            groupingParameter));
+                }
+            }
+
+            return Expression.Call(operatorCall.Method.GetGenericMethodDefinition().MakeGenericMethod(genericArguments), arguments);
+        }
+
+        // Whether the transparent identifier contains the grouping itself, possibly within a nested transparent identifier
+        // (as generated by multiple 'let' clauses).
+        static bool ContainsGrouping(NewExpression newExpression, ParameterExpression groupingParameter)
+        {
+            for (var i = 0; i < newExpression.Arguments.Count; i++)
+            {
+                var argument = newExpression.Arguments[i];
+                if (argument == groupingParameter
+                    || argument is NewExpression { Members: not null } nested && ContainsGrouping(nested, groupingParameter))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 
     private static MethodCallExpression TryNormalizeJoinWithoutResultSelector(MethodCallExpression methodCallExpression)
